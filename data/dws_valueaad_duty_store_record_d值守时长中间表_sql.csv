@@ -1,0 +1,6 @@
+﻿"_x000D_
+                 
+_x000D_
+SELECT *_x000D_
+FROM dws.dws_valueaad_duty_store_record_d_x000D_
+LIMIT 10"
