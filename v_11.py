@@ -1,6 +1,11 @@
 import os
 import random
 
+import asyncio
+# 在主流程中重用现有事件循环
+# loop = asyncio.get_event_loop()
+# 涉及BUG: web_search相关tool
+
 from typing import TypedDict, List, Dict, Literal, Optional
 
 import numpy as np
@@ -18,25 +23,71 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_deepseek import ChatDeepSeek
 
+from v_11_web import fetch_search_results
+
+from v_11_ASR import ASRHandler  # 添加ASR处理器导入
+
 # pip install -U duckduckgo-search -i https://pypi.tuna.tsinghua.edu.cn/simple
-'''
-重构版
-增加了MongoDB
-'''
+
+"""
+v11: 新增ASR语音识别支持
+    - 支持中文(含方言)、英文等多语种识别
+    - 集成实时语音输入功能
+    - 优化语音交互流程
+"""
+
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from typing import List
-from langchain_community.tools import DuckDuckGoSearchResults
-from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from datetime import datetime
-from v_8_dialogues_memory import DialogueManager
+from v_11_dialogues_memory import DialogueManager
 
-# 初始化对话管理器
+
+class UserInfo(TypedDict):
+    user_id: str
+    username: str
+    dialect: str
+    gender: Literal["男", "女", "其他"]  # 新增性别字段
+    preferences: List[str]
+    # 后续新增属性在此添加
+
+
+class ShopInfo(TypedDict):
+    shop_id: str
+    name: str
+    region: str
+    contact: str
+    remark: str
+    promotions: List[str]
+    products_docs: List[Document]
+    # 后续新增属性在此添加
+
+
+# llm = ChatDeepSeek(
+#     model="deepseek-chat",
+#     temperature=0.7,
+#     max_tokens=200,
+#     timeout=60,
+#     max_retries=2,
+#     api_key="sk-228111842ebc45789d19c30dba1714e5",
+# )
+
+llm = ChatOpenAI(
+    base_url="https://api.siliconflow.cn/v1",
+    model="Qwen/Qwen2.5-7B-Instruct",  # Qwen/Qwen3-8B(免费)  Qwen/Qwen3-14B   Qwen/Qwen2.5-7B-Instruct(免费)
+    temperature=0.7,
+    max_tokens=200,
+    timeout=30,
+    max_retries=2,
+    api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit",
+)
+
+# ===== 初始化对话管理器 =====
 CONN_STR = "mongodb://mongodb:DTNxf5TYcZWFKDYY@116.62.149.204:27017/"
 dialogue_manager = DialogueManager(CONN_STR)
 
-# 引入音频生成
-from v_8_TTS import TTSHandler
+# ===== 引入音频生成 =====
+from v_11_TTS import TTSHandler
 
 tts = TTSHandler()
 
@@ -136,30 +187,11 @@ def load_shop_products_csv(file_path: str) -> List[Document]:
     # 店铺内可以对具体商品添加个性化文档 目前略
 
 
-# llm = ChatDeepSeek(
-#     model="deepseek-chat",
-#     temperature=0.7,
-#     max_tokens=200,
-#     timeout=60,
-#     max_retries=2,
-#     api_key="sk-228111842ebc45789d19c30dba1714e5",
-# )
-llm = ChatOpenAI(
-    base_url="https://api.siliconflow.cn/v1",
-    model="Qwen/Qwen2.5-7B-Instruct",  # Qwen/Qwen3-8B(免费)  Qwen/Qwen3-14B   Qwen/Qwen2.5-7B-Instruct(免费)
-    temperature=0.7,
-    max_tokens=200,
-    timeout=30,
-    max_retries=2,
-    api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit",
-)
-
-
 class State(TypedDict):
     session_id: str
     purchased_items: List[str]
-    current_user: dict
-    shop_info: dict
+    current_user: UserInfo  # 使用强类型定义
+    shop_info: ShopInfo  # 修改为强类型
     messages: List[dict]
     current_intent: Optional[str]
     last_response: Optional[str]
@@ -168,111 +200,95 @@ class State(TypedDict):
 
 
 # ===== 工具定义 =====
-
 @tool("handle_web_search")
-def handle_web_search(query: str, dialect: str) -> str:
+def handle_web_search(query: str, dialect: str, gender: str, username: str, ) -> str:
     """获取实时信息（天气、新闻、本地事件等）"""
+    # 配置服务 URL
+    service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
+                  "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
+
+    # 执行异步搜索并返回结果，使用新的事件循环避免冲突
     try:
-        # 创建定制化搜索API包装器（设置中国大陆参数）
-        api_wrapper = DuckDuckGoSearchAPIWrapper(
-            region="cn-zh",  # "cn-zh"中国大陆地区   "wt-wt"：全球范围（默认）    "us-en"：美国英语
-            time="w",  # 最近一周  可分别设置天d、周w、月m、年y
-            max_results=5,  # 限制结果数量
-            safesearch="Moderate",  # 适度安全过滤
-            backend="auto",  # backend='api' is deprecated
-            # timeout=10  # 超时时间
-        )
+        # 创建新的事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        search_results = loop.run_until_complete(fetch_search_results(query, service_url))
+        loop.close()
+    except Exception as e:
+        print(f"[错误] 搜索异常: {str(e)}")
+        search_results = ["无法获取实时信息"]
 
-        # 创建搜索工具实例
-        search = DuckDuckGoSearchResults(
-            api_wrapper=api_wrapper,
-            source="news,web"  # 综合新闻和网页结果
-        )
+    # 调试信息
+    print(f"[调试信息] 搜索结果：{search_results}")
 
-        # 带重试机制的搜索（最多1次，指数退避）
-        @retry(stop=stop_after_attempt(1), wait=wait_random_exponential(multiplier=0.5, max=3))
-        def safe_search():
-            print("[调试信息] 检索尝试")
-            return search.invoke(query)
-
-        results = safe_search()
-
-        # 调试输出原始结果结构
-        print("[调试信息] 原始搜索结果:", results)
-        print("━ ━ ━")
-        # 信息整合提示模板
-        prompt = ChatPromptTemplate.from_template("""
+    # 信息整合提示模板
+    prompt = ChatPromptTemplate.from_template("""
         问题：{query}
         搜索结果：
         {context}
-        用{dialect}方言回复，并
+        用{dialect}方言回复，涵盖{username}和{gender}并
         1. 去除语义无关和推广信息
         2. 合并重复内容
         3. 保留数字和关键点
         4. 简短
-        """)
+    """)
 
-        chain = prompt | llm
-        msg = chain.invoke({
-            "context": "\n\n".join(results),  # 取前两个结果
-            "query": query,
-            "dialect": dialect,
-        }).content
-        print("[调试信息] 节点输出：" + msg)
-        return msg
-    except Exception as e:
-        print(f"联网搜索异常 优先考虑Proxy问题：{str(e)}")
-        # 降级处理
-        msg = random.choice([
-            "当前网络不太稳定，您可以问问店内商品信息~",
-            "暂时无法获取实时数据，推荐查看今日促销活动",
-            "连接超时啦，要不先看看推荐商品？"
-        ])
-        print(f"[调试信息] 节点输出：{msg}")
-        return msg
+    # 链式调用
+    chain = prompt | llm
+    msg = chain.invoke({
+        "context": "\n\n".join(search_results) if isinstance(search_results, list) else search_results,
+        "query": query,
+        "dialect": dialect,
+        "username": username,
+        "gender": gender,
+    }).content
+
+    # 调试信息
+    print("[调试信息] 节点输出：" + msg)
+    return msg
 
 
 @tool("handle_chitchat")
-def handle_chitchat(region: str, name: str, dialect: str, session_id: str, history: List[dict], input: str) -> str:
+def handle_chitchat(region: str, name: str, dialect: str, session_id: str, history: List[dict], input: str, gender: str,
+                    username: str, ) -> str:
     """日常对话处理，使用方言"""
     print(f"[调试] 开始处理闲聊，session_id: {session_id}")
 
-    # 从数据库获取完整对话历史
-    # dialogue = dialogue_manager.get_dialogue(session_id)
-    # if not dialogue:
-    #     print(f"[警告] 未找到对话记录，session_id: {session_id}")
-    #     return "当前会话异常，请重新开始"
-    #
-    # # 获取最近3条消息（含系统消息）
-    # db_history = dialogue.get("messages", [])[-5:]
-    # print(f"[调试信息] 数据库查询结果条数: {len(db_history)}")
-    #
-    # # 转换历史记录格式
-    # history_str = "\n".join([
-    #     f"{msg['type']}：{msg['content']}"
-    #     for msg in db_history if msg['type'] in ['human', 'system']
-    # ])
+    # 获取历史消息
     history_str = dialogue_manager.get_latest_messages(session_id, 6)
-
     print(f"[历史记录] {history_str}")
 
-    # web_info = handle_web_search(f"{input}")
-    web_info = handle_web_search.invoke({"query": input, "dialect": dialect})
-    print("[调试信息] web输出：" + web_info)
+    # 调用web搜索并获取结果，但使用新的事件循环
+    try:
+        # 避免使用其他函数的工具调用方式，直接实现web搜索逻辑
+        service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
+                      "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
+        
+        # 为这次调用创建新的事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        web_info = loop.run_until_complete(fetch_search_results(input, service_url))
+        loop.close()
+        
+        print("[调试信息] web信息获取成功")
+    except Exception as e:
+        print(f"[错误] web搜索异常: {str(e)}")
+        web_info = "无法获取相关信息"
 
-    prompt = ChatPromptTemplate.from_template("""
-    你是位于{region}，名为{name}的无人店铺智能助手，用{dialect}方言友好交流。
-    对话历史：{history}
-    最新消息：顾客：{input}
-    注意可能参考的实时信息{web_info}
-    简短 自然亲切 口语化 并用表情符号
-    """)
+    # 创建提示模板，明确列出所有变量，确保没有'type'字段冲突
+    prompt_template = f"""
+    你是位于{region}，名为{name}的无人店铺智能助手，使用{dialect}方言。
+    用户信息: {username}, {gender}
+    对话历史：{{history}}
+    最新消息：{{input}}
+    可能参考的实时信息：{{web_info}}
+    简短 自然亲切 口语化 使用表情符号
+    """
+    
+    prompt = ChatPromptTemplate.from_template(prompt_template)
 
     chain = prompt | llm
     msg = chain.invoke({
-        "region": region,
-        "name": name,
-        "dialect": dialect,
         "history": history_str,
         "input": input,
         "web_info": web_info,
@@ -289,7 +305,7 @@ def handle_chitchat(region: str, name: str, dialect: str, session_id: str, histo
 
 
 @tool("handle_shopping_guide")
-def handle_shopping_guide(query: str, remark: str, dialect: str) -> str:
+def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, username: str, ) -> str:
     """提供商品导购和位置指引，支持自然语言查询"""
     docs = rag_manager.retrieve(
         query=query,
@@ -304,18 +320,21 @@ def handle_shopping_guide(query: str, remark: str, dialect: str) -> str:
         f" 位置：{doc.metadata['position']} 价格：{doc.metadata['product_price']}元"
         for doc in docs
     ]
-    prompt = ChatPromptTemplate.from_template("""
+    prompt = ChatPromptTemplate.from_template(f"""
     用{dialect}方言回答位置问题：
     商品信息：{product_info}
     用户问题：{input}
     含位置和价格，并附支付指引
-    注意与{remark}内容冲突部分需指出
+    注意要符合{remark}内容，使用表情
+    用户信息：{username}{gender}
     """)
     msg = (prompt | llm).invoke({
         "product_info": "\n".join(product_info),
         "remark": remark,
         "input": query,
-        "dialect": dialect
+        "dialect": dialect,
+        "username": username,
+        "gender": gender,
     }).content
 
     print("[调试信息] 节点输出：" + msg)
@@ -329,7 +348,8 @@ def handle_shopping_guide(query: str, remark: str, dialect: str) -> str:
 
 
 @tool("handle_recommendation")
-def handle_recommendation(query: str, remark: str, preferences: List[str], promotions: List[str], dialect: str) -> str:
+def handle_recommendation(query: str, remark: str, preferences: List[str], promotions: List[str], dialect: str,
+                          gender: str, username: str, ) -> str:
     """根据用户偏好和在售商品提供推荐"""
     # 增强语义查询
     semantic_query = f"推荐条件：{query}，用户偏好：{', '.join(preferences)}"
@@ -383,18 +403,21 @@ def handle_recommendation(query: str, remark: str, preferences: List[str], promo
     #     print(doc.metadata)
     #     rec = f"- {name}（{price}元）{pos}"
 
-    prompt = ChatPromptTemplate.from_template("""
+    prompt = ChatPromptTemplate.from_template(f"""
     用{dialect}方言推荐商品：
+    用户信息：{username}, {gender}
     推荐列表：{recommendations}
     促销活动：{promotions}
-    注意与{remark}内容冲突部分需指出
+    使用表情，注意与{remark}内容冲突部分需指出
     """)
     # 说明推荐理由并包含促销信息
     msg = (prompt | llm).invoke({
         "recommendations": "\n".join(recommendations),
         "remark": remark,
         "promotions": "、".join(promotions),
-        "dialect": dialect
+        "dialect": dialect,
+        "username": username,
+        "gender": gender,
     }).content
 
     print("[调试信息] 节点输出：" + msg)
@@ -475,6 +498,7 @@ def entry_node(state: State):
             "user_info": {
                 "user_id": state["current_user"].get("user_id", "anonymous"),
                 "username": state["current_user"].get("username", "Guest"),
+                "gender": state["current_user"]["gender"],
                 "preferences": state["current_user"].get("preferences", []),
                 "dialect": state["current_user"].get("dialect", "普通话")
             },
@@ -520,6 +544,7 @@ def personalized_welcome(state: State):
     print("[调试信息] recommends: ", recommends)
     prompt = ChatPromptTemplate.from_template("""
     欢迎来到{region}的名为{name}的无人值守店！
+    客户姓名{username}性别{gender}。
     精选推荐：{recommends}
     今日活动：{promotions}
     使用{dialect}方言带表情符号的欢迎词，力求简短""")
@@ -527,6 +552,8 @@ def personalized_welcome(state: State):
     response = (prompt | llm).invoke({
         "region": state["shop_info"]["region"],
         "name": state["shop_info"]["name"],
+        "gender": state["current_user"]["gender"],
+        "username": state["current_user"]["username"],
         "recommends": "、".join(recommends),
         "promotions": "、".join(state["shop_info"]["promotions"]),
         "dialect": state["current_user"]["dialect"]
@@ -582,7 +609,7 @@ def intent_recognition(state: State):
         "message": state["messages"][-1].content,
         "history": history
     }).content
-    print("[调试信息] 意图节点输出：" + msg)
+    # print("[调试信息] 意图节点输出：" + msg)
 
     # DEBUG 由于很多模型不一定会按照格式输出  要截取
     msg = msg.replace(' ', '')
@@ -601,35 +628,67 @@ def intent_recognition(state: State):
     }
 
 
-# ===== 新增用户输入处理节点 =====
+# ===== 新增用户输入处理节点 v11新增ASR支持=====
 def collect_human_input(state: State):
     if state.get("exit_flag"):
         return {"exit_flag": True}
 
     try:
-        user_input = input("用户：")
+        user_input = input("用户(voice启动语音)：")
+        
+        # 检查是否进入语音输入模式
+        if user_input.lower() == "voice":
+            print("已进入语音输入模式")
+            # 初始化ASR处理器
+            asr = ASRHandler(
+                input_source='mic',
+                language_hints=["zh", "en"],
+                disfluency_removal_enabled=True
+            )
+            
+            try:
+                # 启动ASR并等待用户按回车结束
+                asr.start()
+                
+                # 停止ASR并获取结果
+                asr.stop()
+                user_input = asr.get_final_result()
+                if user_input.strip():  # 只在有识别结果时显示
+                    print(f"识别结果：{user_input}")
+                else:
+                    print("未检测到语音输入")
+                    return {"messages": state["messages"]}
+                
+            except Exception as e:
+                print(f"语音识别错误: {str(e)}")
+                if asr:
+                    asr.stop()
+                return {"messages": state["messages"]}
+
+        # 检查退出命令
+        if user_input.lower() in ["退出", "exit", "quit"]:
+            return {"exit_flag": True}
+
+        # 保存用户消息到数据库
+        user_msg = {
+            "message_id": f"msg_{len(state['messages']) + 1}",
+            "type": "human",
+            "content": user_input,
+            "timestamp": datetime.utcnow(),
+            "metadata": {
+                "input_mode": "voice" if user_input.lower() == "voice" else "console"
+            }
+        }
+        dialogue_manager.append_message(state["session_id"], user_msg)
+        print('[调试信息] 用户消息已持久化')
+
+        new_message = HumanMessage(content=user_input)
+        return {
+            "messages": state["messages"] + [new_message],
+            "last_response": None
+        }
     except EOFError:
         return {"exit_flag": True}
-
-    if user_input.lower() in ["退出", "exit", "quit"]:
-        return {"exit_flag": True}
-
-    # 保存用户消息到数据库
-    user_msg = {
-        "message_id": f"msg_{len(state['messages']) + 1}",
-        "type": "human",
-        "content": user_input,
-        "timestamp": datetime.utcnow(),
-        "metadata": {}
-    }
-    dialogue_manager.append_message(state["session_id"], user_msg)
-    print('[调试信息] 用户消息已持久化')
-
-    new_message = HumanMessage(content=user_input)
-    return {
-        "messages": state["messages"] + [new_message],
-        "last_response": None
-    }
 
 
 def update_state(state: dict, response: str) -> dict:
@@ -667,70 +726,79 @@ def create_tool_node(tool_name: str):
             }
             for msg in state["messages"][-5:]
         ]
-
+        user_info = state["current_user"]
+        shop_info = state["shop_info"]
         params = {
+            **user_info,  # 自动展开所有用户属性 不需要显式添加
             "session_id": state["session_id"],
-            "region": state["shop_info"]["region"],
-            "name": state["shop_info"]["name"],
-            "dialect": state["current_user"]["dialect"],
             "history": converted_history,  # 使用转换后的历史记录
             "input": last_msg,
-            "remark": state["shop_info"]["remark"],  # 引入店铺备注
-            "products_docs": state["shop_info"]["products_docs"],
-            "preferences": state["current_user"]["preferences"],
-            "promotions": state["shop_info"]["promotions"],
-            "contact_info": state["shop_info"].get("contact", "400-1234-5678")
+            **shop_info  # 自动展开所有店铺属性 不需要显式添加
         }
 
-        if tool_name == "handle_chitchat":
-            response = handle_chitchat.invoke(params)
-        elif tool_name == "handle_web_search":
-            response = handle_web_search.invoke({
-                "query": last_msg,  # 传递用户输入作为查询参数
-                "dialect": params["dialect"],
-            })
-        elif tool_name == "handle_shopping_guide":
-            response = handle_shopping_guide.invoke({
-                "query": last_msg,
-                "remark": params["remark"],
-                "products_docs": params["products_docs"],
-                "dialect": params["dialect"]
-            })
-        elif tool_name == "handle_recommendation":
-            response = handle_recommendation.invoke({
-                "query": last_msg,
-                "remark": params["remark"],
-                "preferences": params["preferences"],
-                "products_docs": params["products_docs"],
-                "promotions": params["promotions"],
-                "dialect": params["dialect"]
-            })
-        elif tool_name == "handle_human_transfer":
-            response = handle_human_transfer.invoke({
-                "contact_info": params["contact_info"]
-            })
-        elif tool_name == "handle_report":
-            response = handle_report.invoke({
-                "sales": random.randint(5000, 10000),
-                "profit": random.randint(1500, 3000),
-                "hot_products": ["椰树椰汁", "农夫山泉"][:random.randint(1, 2)]
-            })
-        elif tool_name == "handle_payment":
-            # TODO 最后告别词也可以持久化
-            response = handle_payment.invoke({})
-            new_state = update_state(state, response)
-            if "成功" in response:
-                return {
-                    **new_state,
-                    "payment_status": "success",
-                    "exit_flag": True
-                }
+        try:
+            if tool_name == "handle_chitchat":
+                response = handle_chitchat.invoke(params)
+            elif tool_name == "handle_web_search":
+                response = handle_web_search.invoke({
+                    "query": last_msg,  # 传递用户输入作为查询参数
+                    "dialect": params["dialect"],
+                    "gender": params["gender"],
+                    "username": params["username"],
+                })
+            elif tool_name == "handle_shopping_guide":
+                response = handle_shopping_guide.invoke({
+                    "query": last_msg,
+                    "remark": params["remark"],
+                    "dialect": params["dialect"],
+                    "gender": params["gender"],
+                    "username": params["username"],
+                })
+            elif tool_name == "handle_recommendation":
+                response = handle_recommendation.invoke({
+                    "query": last_msg,
+                    "remark": params["remark"],
+                    "preferences": params["preferences"],
+                    "promotions": params["promotions"],
+                    "dialect": params["dialect"],
+                    "gender": params["gender"],
+                    "username": params["username"],
+                })
+            elif tool_name == "handle_human_transfer":
+                response = handle_human_transfer.invoke({
+                    "contact_info": params["contact"],
+                })
+            elif tool_name == "handle_report":
+                response = handle_report.invoke({
+                    "sales": random.randint(5000, 10000),
+                    "profit": random.randint(1500, 3000),
+                    "hot_products": ["椰树椰汁", "农夫山泉"][:random.randint(1, 2)]
+                })
+            elif tool_name == "handle_payment":
+                # TODO 最后告别词也可以持久化
+                response = handle_payment.invoke({})
+                new_state = update_state(state, response)
+                if "成功" in response:
+                    return {
+                        **new_state,
+                        "payment_status": "success",
+                        "exit_flag": True
+                    }
+                else:
+                    # 支付失败时添加重试提示
+                    new_state["messages"].append(AIMessage(
+                        content="支付失败，请检查余额或更换支付方式"
+                    ))
+                    return new_state
             else:
-                # 支付失败时添加重试提示
-                new_state["messages"].append(AIMessage(
-                    content="支付失败，请检查余额或更换支付方式"
-                ))
-                return new_state
+                # 未知工具
+                response = f"未能识别的工具: {tool_name}"
+                print(f"[错误] {response}")
+        except Exception as e:
+            # 处理工具调用错误
+            error_msg = f"工具调用异常: {str(e)}"
+            print(f"[错误] {error_msg}")
+            response = f"抱歉，处理您的请求时出现了问题，请稍后再试。"
 
         ai_msg = {
             "message_id": f"msg_{len(state['messages']) + 1}",
@@ -807,21 +875,23 @@ builder.add_edge("goodbye", END)
 if __name__ == "__main__":
     sample_user = {
         "user_id": "user-123",
-        "dialect": "上海",
-        "preferences": ["茅台", "中华", ]
+        "dialect": "北京",
+        "gender": "女",  # 新增
+        "preferences": ["茅台酒", "中华香烟"],
+        "username": "张开开"  # 新增
     }
     # 商品信息Document修改为读取CSV
     products_docs_list = load_shop_products_csv(
         "data/store_cloud_duty_store_order_goods_day.csv")  # 替换为实际路径
-    sample_shop = {
-        "shop_id": "shop-123",
-        "region": "杭州",
-        "name": "西湖123便利店",
-        "remark": "门密码888；购物袋免费；成条烟不拆开；店内不堂食；可以接热水；",
-        "promotions": ["满30减5", "买条烟送一个打火机", "糖果免费"],
-        "products_docs": products_docs_list,  # 使用加载后的增强数据
-        "contact": "X老板, 123-1234-5678",
-    }
+    sample_shop = ShopInfo(
+        shop_id="shop-123",
+        name="西湖123便利店",
+        region="杭州",
+        contact="X老板, 123-1234-5678",
+        remark="门密码问店长；购物袋免费；成条烟不拆开；店内不堂食；可以接热水；",
+        promotions=["满30减5", "送口香糖"],
+        products_docs=products_docs_list  # 使用加载后的增强数据
+    )
 
     flow = builder.compile()
 
@@ -834,7 +904,7 @@ if __name__ == "__main__":
         "messages": [],
         "payment_status": "pending",
         "exit_flag": False,
-        "session_id": "shop-123_user-123_20250519103421"  # DEBUG 可选的指定session_id 表示在历史记录上追加
+        "session_id": "shop-123_user-123_20250522164331"  # DEBUG 可选的指定session_id 表示在历史记录上追加
     }
 
     # 运行对话循环
@@ -862,11 +932,9 @@ if __name__ == "__main__":
             break
         initial_state = final_state or initial_state
 
-#   TODO 自定义的持久化记忆功能  包括自定义sessionID和记录  OKK
-#   TODO 考虑TTS 语音合成 阿里的CosyVoice  OKK  若要排除 直接搜索TTS相关即可
 #   TODO 周边商品推荐功能
 
-#   TODO 考虑ASR语音识别  目前考虑阿里paraformer-realtime-v2支持的语种：中文（含普通话和各种方言）、英文、日语、韩语、德语、法语、俄语
+#   ASR语音识别  目前考虑阿里paraformer-realtime-v2支持的语种：中文（含普通话和各种方言）、英文、日语、韩语、德语、法语、俄语
 #   支持的中文方言：上海话、吴语、闽南语、东北话、甘肃话、贵州话、河南话、湖北话、湖南话、江西话、宁夏话、山西话、陕西话、山东话、四川话、天津话、云南话、粤语
 #   核心能力：
 #   支持标点符号预测

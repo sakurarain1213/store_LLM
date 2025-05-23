@@ -6,6 +6,7 @@ import pyaudio
 from datetime import datetime
 from dashscope.audio.asr import *
 import dashscope
+import threading
 
 
 # 待实际接入
@@ -65,7 +66,11 @@ class ASRHandler:
     def get_final_result(self):
         """获取最终识别文本"""
         if self.recognition and hasattr(self.recognition, '_callback'):
-            return self.recognition._callback.full_text  # 访问私有属性
+            callback = self.recognition._callback
+            # 确保未完成的句子也被添加到结果中
+            callback.get_full_text()
+            # 返回连接后的字符串
+            return ' '.join(callback.full_text)
         return ""
 
     class RecognitionCallback(RecognitionCallback):
@@ -153,15 +158,19 @@ class ASRHandler:
 
     def stop(self):
         """停止识别并释放资源"""
-        if self.recognition:
-            self.recognition.stop()
-            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 识别已停止")
-        if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        if self.mic:
-            self.mic.terminate()
-        self.is_running = False
+        try:
+            if self.recognition and self.is_running:
+                self.recognition.stop()
+                print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 识别已停止")
+        except Exception as e:
+            print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 停止识别时出现异常: {str(e)}")
+        finally:
+            if self.stream:
+                self.stream.stop_stream()
+                self.stream.close()
+            if self.mic:
+                self.mic.terminate()
+            self.is_running = False
 
     def _process_file(self):
         """处理文件输入流"""
@@ -179,50 +188,68 @@ class ASRHandler:
 
     def _process_mic(self):
         """处理麦克风实时流"""
-        print("请开始说话（按Ctrl+C停止）...")
+        print("请开始说话（按回车键结束）...")
         try:
-            while self.is_running and self.stream:
-                data = self.stream.read(self.block_size,
-                                        exception_on_overflow=False)
-                self.recognition.send_audio_frame(data)
-        except IOError as e:
-            print(f"音频流错误: {str(e)}")
-            self.stop()
+            # 创建一个线程来监听回车键
+            def check_enter():
+                input("正在聆听...")  # 提供更清晰的提示
+                self.is_running = False
+            
+            # 启动监听线程
+            enter_thread = threading.Thread(target=check_enter)
+            enter_thread.daemon = True  # 设置为守护线程，这样主程序退出时线程会自动结束
+            enter_thread.start()
+            
+            # 主循环处理音频
+            while self.is_running and self.stream and self.recognition:
+                try:
+                    data = self.stream.read(self.block_size,
+                                          exception_on_overflow=False)
+                    if self.is_running:  # 再次检查，避免在读取后发送前停止
+                        self.recognition.send_audio_frame(data)
+                except Exception as e:
+                    if self.is_running:  # 只在仍然运行时打印错误
+                        print(f"音频处理错误: {str(e)}")
+                    break
+        except Exception as e:
+            print(f"麦克风处理错误: {str(e)}")
+        finally:
+            self.stop()  # 确保资源被释放
 
     def _signal_handler(self, sig, frame):
-        """信号处理函数"""
+        """信号处理函数（保留作为备用）"""
         print("\n检测到终止信号...")
         self.stop()
-        sys.exit(0)
+        # sys.exit(0)  不要终止整个程序
 
 
 if __name__ == "__main__":
     # 使用示例
 
-    asr = ASRHandler(
-        input_source='file',
-        file_path=r"C:\Users\w1625\Desktop\test.wav",
-        model='paraformer-realtime-v2',
-        format='wav',
-        language_hints=["zh"],
-    )
-
-    try:
-        asr.start()
-    except KeyboardInterrupt:
-        asr.stop()
-    final_text = asr.get_final_result()
-    print("\n完整结果：\n", final_text)
-
-    # # 麦克风实时识别示例
     # asr = ASRHandler(
-    #     input_source='mic',
-    #     language_hints=["zh", "en"],
-    #     disfluency_removal_enabled=True
+    #     input_source='file',
+    #     file_path=r"C:\Users\w1625\Desktop\test.wav",
+    #     model='paraformer-realtime-v2',
+    #     format='wav',
+    #     language_hints=["zh"],
     # )
+    #
     # try:
     #     asr.start()
     # except KeyboardInterrupt:
     #     asr.stop()
     # final_text = asr.get_final_result()
     # print("\n完整结果：\n", final_text)
+
+    # # 麦克风实时识别示例
+    asr = ASRHandler(
+        input_source='mic',
+        language_hints=["zh", "en"],
+        disfluency_removal_enabled=True
+    )
+    try:
+        asr.start()
+    except KeyboardInterrupt:
+        asr.stop()
+    final_text = asr.get_final_result()
+    print("\n完整结果：\n", final_text)
