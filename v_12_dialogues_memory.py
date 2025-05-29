@@ -27,15 +27,15 @@ class DialogueManager:
             self.db = self.client[db_name]
             self.collection = self.db[collection]
             self._create_indexes()  # 自动创建索引
-            print("MongoDB连接成功") #✅
+            print("MongoDB连接") #✅
         except ConnectionFailure as e:
             raise RuntimeError(f"连接失败: {str(e)}")
 
     def _create_indexes(self):
         """创建优化索引（幂等操作）"""
         indexes = [
-            {"key": [("session_id", 1)], "unique": True},  # 唯一索引[1](@ref)
-            {"key": [("shop_info.shop_id", 1)]},  # 普通索引[4](@ref)
+            {"key": [("session_id", 1)], "unique": True},  # 唯一索引
+            {"key": [("shop_info.shop_id", 1)]},  # 普通索引
             {"key": [("user_info.user_id", 1)]},
             {"key": [("start_time", -1)]},
             {"key": [("status.payment_status", 1)]}
@@ -182,6 +182,23 @@ class DialogueManager:
         except Exception as e:
             print(f"数据库查询失败: {str(e)}")
             return None
+
+    def update_user_info(self, session_id: str, user_info: dict) -> bool:
+        """
+        更新对话中的用户信息
+        :param session_id: 会话ID
+        :param user_info: 新的用户信息
+        :return: 是否更新成功
+        """
+        try:
+            result = self.collection.update_one(
+                {"session_id": session_id},
+                {"$set": {"user_info": user_info}}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            print(f"[错误] 更新用户信息失败: {str(e)}")
+            return False
 
 if __name__ == "__main__":
     # 配置连接信息（示例）
