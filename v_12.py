@@ -75,7 +75,7 @@ llm = ChatDeepSeek(
     max_tokens=200,
     timeout=60,
     max_retries=2,
-    api_key="sk-228111842ebc45789d19c30dba1714e5",
+    api_key="sk-",
 )
 
 # llm = ChatOpenAI(
@@ -85,11 +85,11 @@ llm = ChatDeepSeek(
 #     max_tokens=200,
 #     timeout=30,
 #     max_retries=2,
-#     api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit",
+#     api_key="sk-",
 # )
 
 # ===== 初始化对话管理器 =====
-CONN_STR = "mongodb://mongodb:DTNxf5TYcZWFKDYY@116.62.149.204:27017/"
+CONN_STR = "mongodb://mongodb:"
 dialogue_manager = DialogueManager(CONN_STR)
 
 
@@ -353,7 +353,7 @@ def handle_web_search(query: str, dialect: str, gender: str, username: str) -> s
     """获取实时信息( 天气、新闻、本地事件等) """
     # 配置服务 URL
     service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
-                  "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
+                  "api_key=Bearer+"
 
     # 执行异步搜索并返回结果，使用新的事件循环避免冲突
     try:
@@ -410,7 +410,7 @@ def handle_chitchat(region: str, name: str, dialect: str, session_id: str, histo
     try:
         # 避免使用其他函数的工具调用方式，直接实现web搜索逻辑
         service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
-                      "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
+                      "api_key=Bearer+"
 
         # 为这次调用创建新的事件循环
         loop = asyncio.new_event_loop()

@@ -7,7 +7,7 @@ from tqdm import tqdm  # 进度条显示
 # 初始化OpenAI客户端
 client = OpenAI(
     base_url="https://api.siliconflow.cn/v1",
-    api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit"
+    api_key="sk-"
 )
 
 

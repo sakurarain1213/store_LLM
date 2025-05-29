@@ -10,7 +10,7 @@ from dashscope.audio.tts_v2 import *
 
 
 class TTSHandler:
-    def __init__(self, api_key="sk-effb15582c0a45a38120d65b1a2ad05a",
+    def __init__(self, api_key="sk-",
                  model="cosyvoice-v2",
                  voice="longhua_v2",
                  format=AudioFormat.WAV_22050HZ_MONO_16BIT):
@@ -80,5 +80,5 @@ class TTSHandler:
 
 # 将 SpeechSynthesizer 的实例化从 __init__ 移动到 synthesize_and_play 方法内部，确保每次调用都使用全新的实例，避免阿里云 SDK 可能的内部状态残留问题。
 #  用法
-# tts = TTSHandler(api_key="sk-effb15582c0a45a38120d65b1a2ad05a")
+# tts = TTSHandler(api_key="sk-")
 # tts.synthesize_and_play("现在时间是下午三点，当前室外温度28度，空气质量优")

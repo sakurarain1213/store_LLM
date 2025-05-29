@@ -16,18 +16,18 @@ import os
 
 # 设置环境变量
 # 以下是第三方中转的API key
-# os.environ['OPENAI_API_KEY'] = "sk-pe2SnqFlGZO3PY5Q7e7d4b4d2b4443D9Ac502c7764A6Ce04"
+# os.environ['OPENAI_API_KEY'] = "sk-"
 # os.environ['OPENAI_BASE_URL'] = "https://one.glbai.com"
 
 # 以下是DEEPSEEK的API key
 # https://platform.deepseek.com/sign_in
 # https://api.deepseek.com
-# sk-ddfc101fffe14b579b0179ae78c678d7
+# sk-
 
 # 以下是腾讯混元的API key
 # api_key=os.environ.get("HUNYUAN_API_KEY"),  # 混元 APIKey
 # base_url="https://api.hunyuan.cloud.tencent.com/v1",  # 混元 endpoint
-# sk-jzCIuSlqRrYnLVTZxUSSlXZR7cx2dUIRXj0hp6Rc2Rrmkhtu
+# sk-
 
 
 # # 构建请求体

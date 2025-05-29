@@ -43,7 +43,7 @@ async def fetch_search_results(query: str, service_url: str, search_top_k: int =
 # 示例使用
 if __name__ == "__main__":
     service_url = ("http://appbuilder.baidu.com/v2/ai_search/mcp/sse?"
-                   "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877")
+                   "api_key=Bearer+")
     query = "杭州天气"
 
     # 执行异步函数
