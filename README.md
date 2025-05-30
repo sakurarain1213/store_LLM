@@ -18,7 +18,7 @@ Tools：
 
 Welcome、chitchat 、shopping guide（万级商品表检索）、recommendation、payment、goodbye等
 
-[![1.png](https://i.postimg.cc/0ycnL8kP/1.png)](https://postimg.cc/k2RWSPRp)
+[![1.png](https://i.postimg.cc/hGhD9C8J/1.png)](https://postimg.cc/CZTp0sQY)
 
 ## 过程中状态管理
 ```python
