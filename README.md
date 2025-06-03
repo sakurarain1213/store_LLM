@@ -14,6 +14,10 @@
   - TTS: 阿里CosyVoice (8音色中英文)
 
 ## 功能模块
+
+[![1.png](https://i.postimg.cc/SQHYkyGC/1.png)](https://postimg.cc/kDFgyPzg)
+
+
 Tools：
 
 Welcome、chitchat 、shopping guide（万级商品表检索）、recommendation、payment、goodbye等
