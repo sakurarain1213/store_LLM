@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI对话助手</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .chat-container {
+            width: 90%;
+            max-width: 800px;
+            height: 90vh;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .chat-header h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .new-chat-btn {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255, 255, 255, 0.2);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .new-chat-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-50%) scale(1.05);
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 20px;
+            display: flex;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            justify-content: flex-end;
+        }
+
+        .message.ai {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 15px 20px;
+            border-radius: 20px;
+            position: relative;
+            word-wrap: break-word;
+            line-height: 1.4;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message.ai .message-bubble {
+            background: white;
+            color: #333;
+            border: 1px solid #e1e5e9;
+            border-bottom-left-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .response-time {
+            font-size: 12px;
+            color: #999;
+            margin-top: 5px;
+            margin-left: 20px;
+        }
+
+        .chat-input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e1e5e9;
+        }
+
+        .chat-input-form {
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .chat-input {
+            flex: 1;
+            padding: 15px 20px;
+            border: 2px solid #e1e5e9;
+            border-radius: 25px;
+            font-size: 16px;
+            resize: none;
+            max-height: 120px;
+            min-height: 50px;
+            outline: none;
+            transition: border-color 0.3s ease;
+        }
+
+        .chat-input:focus {
+            border-color: #667eea;
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.2s ease;
+            font-size: 18px;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading-indicator {
+            display: none;
+            align-items: center;
+            gap: 5px;
+            color: #999;
+            font-size: 14px;
+            margin-left: 20px;
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 3px;
+        }
+
+        .loading-dots span {
+            width: 4px;
+            height: 4px;
+            background: #999;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out;
+        }
+
+        .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+        .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+
+        .user-info-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 20px;
+            width: 95%;
+            max-width: 1200px;
+            display: flex;
+            gap: 30px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .form-section {
+            flex: 1;
+            padding: 20px;
+            border-radius: 15px;
+            background: #f8f9fa;
+            min-width: 400px;
+        }
+
+        .form-section h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 20px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #444;
+            font-weight: 500;
+        }
+
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 16px;
+            background: white;
+        }
+
+        .form-group input:focus, .form-group select:focus {
+            border-color: #667eea;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-section.shop-section {
+            background: #e8f4ff;
+        }
+
+        .form-section.user-section {
+            background: #fff4e8;
+        }
+
+        .start-chat-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 18px;
+            width: 100%;
+            margin-top: 30px;
+            font-weight: 600;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .start-chat-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 1200px) {
+            .modal-content {
+                flex-direction: column;
+                max-width: 800px;
+            }
+
+            .form-section {
+                min-width: unset;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .modal-content {
+                width: 100%;
+                height: 100vh;
+                border-radius: 0;
+                padding: 20px;
+            }
+
+            .form-section {
+                padding: 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="user-info-modal" id="userInfoModal">
+        <div class="modal-content">
+            <div class="form-section shop-section">
+                <h3>店铺信息</h3>
+                <div class="form-group">
+                    <label for="shopName">店铺名称</label>
+                    <input type="text" id="shopName" value="西湖123便利店">
+                </div>
+                <div class="form-group">
+                    <label for="shopRegion">所在地区</label>
+                    <input type="text" id="shopRegion" value="杭州">
+                </div>
+                <div class="form-group">
+                    <label for="shopContact">联系方式</label>
+                    <input type="text" id="shopContact" value="X老板, 123-1234-5678">
+                </div>
+                <div class="form-group">
+                    <label for="shopRemark">店铺备注</label>
+                    <input type="text" id="shopRemark" value="购物袋免费；成条烟不拆开；店内不堂食；可以接热水；">
+                </div>
+                <div class="form-group">
+                    <label for="shopPromotions">促销活动（用逗号分隔）</label>
+                    <input type="text" id="shopPromotions" value="满30减5,送口香糖">
+                </div>
+            </div>
+            <div class="form-section user-section">
+                <h3>用户信息</h3>
+                <div class="form-group">
+                    <label for="username">用户名</label>
+                    <input type="text" id="username" value="张三">
+                </div>
+                <div class="form-group">
+                    <label for="dialect">方言</label>
+                    <input type="text" id="dialect" list="dialect-list" value="普通话">
+                    <datalist id="dialect-list">
+                        <option value="英文">
+                        <option value="日语">
+                        <option value="德语">
+                        <option value="法语">
+                        <option value="俄语">
+                        <option value="普通话">
+                        <option value="上海话">
+                        <option value="吴语">
+                        <option value="闽南语">
+                        <option value="东北话">
+                        <option value="甘肃话">
+                        <option value="贵州话">
+                        <option value="河南话">
+                        <option value="湖北话">
+                        <option value="湖南话">
+                        <option value="江西话">
+                        <option value="宁夏话">
+                        <option value="山西话">
+                        <option value="陕西话">
+                        <option value="山东话">
+                        <option value="四川话">
+                        <option value="天津话">
+                        <option value="云南话">
+                        <option value="粤语">
+                    </datalist>
+                </div>
+                <div class="form-group">
+                    <label for="gender">性别</label>
+                    <select id="gender">
+                        <option value="男" selected>男</option>
+                        <option value="女">女</option>
+                        <option value="其他">其他</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="preferences">偏好（用逗号分隔）</label>
+                    <input type="text" id="preferences" value="可乐,香烟">
+                </div>
+            </div>
+            <button class="start-chat-btn" onclick="startNewChat()">开始对话</button>
+        </div>
+    </div>
+
+    <div class="chat-container">
+        <div class="chat-header">
+            <h1>无人店值守对话大模型DEMO</h1>
+            <button class="new-chat-btn" onclick="showUserInfoModal()">新对话</button>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input-container">
+            <form class="chat-input-form" onsubmit="sendMessage(event)">
+                <textarea class="chat-input" id="messageInput" placeholder="输入消息..." rows="1"></textarea>
+                <button type="submit" class="send-btn" id="sendBtn">➤</button>
+            </form>
+            <div class="loading-indicator" id="loadingIndicator">
+                <span>AI正在思考</span>
+                <div class="loading-dots">
+                    <span></span>
+                    <span></span>
+                    <span></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = null;
+        const userId = 'user-' + Math.random().toString(36).substr(2, 9);
+
+        function showUserInfoModal() {
+            // 先清空对话
+            document.getElementById('chatMessages').innerHTML = '';
+            currentSessionId = null;
+            // 再显示模态框
+            document.getElementById('userInfoModal').style.display = 'flex';
+        }
+
+        function hideUserInfoModal() {
+            document.getElementById('userInfoModal').style.display = 'none';
+        }
+
+        async function startNewChat() {
+            const username = document.getElementById('username').value;
+            const dialect = document.getElementById('dialect').value;
+            const gender = document.getElementById('gender').value;
+            const preferences = document.getElementById('preferences').value.split(',').map(p => p.trim());
+
+            const shopName = document.getElementById('shopName').value;
+            const shopRegion = document.getElementById('shopRegion').value;
+            const shopContact = document.getElementById('shopContact').value;
+            const shopRemark = document.getElementById('shopRemark').value;
+            const shopPromotions = document.getElementById('shopPromotions').value.split(',').map(p => p.trim());
+
+            if (!username || !dialect || !shopName || !shopRegion) {
+                alert('请填写必要信息（用户名、方言、店铺名称、所在地区）');
+                return;
+            }
+
+            try {
+                const startTime = Date.now();
+                const response = await fetch('http://localhost:8000/chat/new', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        dialect: dialect,
+                        gender: gender,
+                        preferences: preferences,
+                        username: username,
+                        shop_info: {
+                            name: shopName,
+                            region: shopRegion,
+                            contact: shopContact,
+                            remark: shopRemark,
+                            promotions: shopPromotions
+                        }
+                    })
+                });
+
+                const data = await response.json();
+                if (data.status === 'success') {
+                    currentSessionId = data.session_id;
+                    const responseTime = Date.now() - startTime;
+                    addMessage(data.response, 'ai', responseTime);
+                    hideUserInfoModal();
+                } else {
+                    alert('创建对话失败：' + data.error);
+                }
+            } catch (error) {
+                alert('创建对话失败：' + error.message);
+            }
+        }
+
+        async function sendMessage(event) {
+            event.preventDefault();
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+            
+            if (!message || !currentSessionId) return;
+
+            // 添加用户消息到界面
+            addMessage(message, 'user');
+            messageInput.value = '';
+
+            // 显示加载指示器
+            const loadingIndicator = document.getElementById('loadingIndicator');
+            const sendBtn = document.getElementById('sendBtn');
+            loadingIndicator.style.display = 'flex';
+            sendBtn.disabled = true;
+
+            try {
+                const startTime = Date.now();
+                const response = await fetch('http://localhost:8000/chat/continue', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: currentSessionId,
+                        message: message
+                    })
+                });
+
+                const data = await response.json();
+                const responseTime = Date.now() - startTime;
+                if (data.status === 'success') {
+                    addMessage(data.response, 'ai', responseTime);
+                } else {
+                    addMessage('抱歉，发生了错误：' + data.error, 'ai', responseTime);
+                }
+            } catch (error) {
+                addMessage('抱歉，发生了错误：' + error.message, 'ai', 0);
+            } finally {
+                loadingIndicator.style.display = 'none';
+                sendBtn.disabled = false;
+            }
+        }
+
+        function addMessage(text, type, responseTime = null) {
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = text;
+            
+            messageDiv.appendChild(bubble);
+
+            // 添加响应时间显示
+            if (type === 'ai' && responseTime !== null) {
+                const timeDiv = document.createElement('div');
+                timeDiv.className = 'response-time';
+                timeDiv.textContent = `响应时间: ${(responseTime / 1000).toFixed(2)}秒`;
+                messageDiv.appendChild(timeDiv);
+            }
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // 自动调整文本框高度
+        document.getElementById('messageInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight) + 'px';
+        });
+
+        // 页面加载时显示用户信息模态框
+        window.onload = showUserInfoModal;
+    </script>
+</body>
+</html>

@@ -60,7 +60,7 @@ class ASRHandler:
         if 'DASHSCOPE_API_KEY' in os.environ:
             dashscope.api_key = os.environ['DASHSCOPE_API_KEY']
         else:
-            dashscope.api_key = "sk-"
+            dashscope.api_key = "sk-effb15582c0a45a38120d65b1a2ad05a"
             # raise ValueError("请设置环境变量DASHSCOPE_API_KEY")
 
     def get_final_result(self):

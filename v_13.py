@@ -28,28 +28,24 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_deepseek import ChatDeepSeek
 
-from v_12_web import fetch_search_results
+from v_13_web import fetch_search_results
 
-# from v_12_ASR import ASRHandler  # 添加ASR处理器导入
+# from v_13_ASR import ASRHandler  # 添加ASR处理器导入
 
-from v_12_dialogues_memory import DialogueManager
+from v_13_dialogues_memory import DialogueManager
 
-# from v_12_TTS import TTSHandler
+from v_13_TTS import TTSHandler
 
 # pip install -U duckduckgo-search -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 """
-v11: 新增ASR语音识别支持
-    - 支持中文(含方言)、英文等多语种识别
-    - 集成实时语音输入功能
-    - 优化语音交互流程
+v13: 恢复TTS 使用新接口
 """
 
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from typing import List
 
 from datetime import datetime
-
 
 # TODO UserInfo似乎没用上 以及State类的使用问题 严格定义一下使用类来传递参数
 class UserInfo(TypedDict):
@@ -83,12 +79,11 @@ class ShopInfo(TypedDict):
 
 llm = ChatOpenAI(
     base_url="https://api.siliconflow.cn/v1",
-    model="THUDM/glm-4-9b-chat",
-    # Qwen/Qwen2-7B-Instruct(免费)   Qwen/Qwen3-8B(免费)  Qwen/Qwen3-14B   Qwen/Qwen2.5-7B-Instruct(免费)  THUDM/GLM-4-9B-0414( 智谱免费，但幻觉强)
+    model="THUDM/glm-4-9b-chat",  #Qwen/Qwen2-7B-Instruct(免费)   Qwen/Qwen3-8B(免费)  Qwen/Qwen3-14B   Qwen/Qwen2.5-7B-Instruct(免费)  THUDM/GLM-4-9B-0414( 智谱免费，但幻觉强) 
     temperature=0.5,  # 降低温度以获得更确定性的回答
-    max_tokens=500,  # 减少最大token数
-    timeout=20,  # 减少超时时间
-    max_retries=1,  # 减少重试次数
+    max_tokens=500,   # 减少最大token数
+    timeout=20,       # 减少超时时间
+    max_retries=1,    # 减少重试次数
     api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit",
 )
 
@@ -96,9 +91,10 @@ llm = ChatOpenAI(
 CONN_STR = "mongodb://mongodb:DTNxf5TYcZWFKDYY@116.62.149.204:27017/"
 dialogue_manager = DialogueManager(CONN_STR)
 
-
+# ===== 全局配置 =====
+ENABLE_TTS = False  # 控制是否启用TTS服务
 # ===== 引入音频生成 =====
-# tts = TTSHandler()
+tts = TTSHandler() if ENABLE_TTS else None
 
 
 class RAGManager:
@@ -210,18 +206,18 @@ class State(TypedDict):
 
 class NodeManager:
     """集中管理所有节点和工具的定义与注册"""
-
+    
     def __init__(self):
         self.tools = {}
         self.nodes = {}
         self.edges = []
         self.conditional_edges = []
-
+        
     def register_tool(self, tool_func):
         """注册工具函数并创建对应的节点"""
         tool_name = tool_func.__name__
         self.tools[tool_name] = tool_func
-
+        
         # 创建工具节点
         def tool_node(state: State):
             last_msg = state["messages"][-1].content
@@ -232,12 +228,12 @@ class NodeManager:
                 }
                 for msg in state["messages"][-5:]
             ]
-
+            
             # 使用inspect获取函数参数
             import inspect
             sig = inspect.signature(tool_func)
             params = {}
-
+            
             # 核心 根据参数名从state中获取对应的值
             for param_name in sig.parameters:
                 if param_name == "query":
@@ -264,11 +260,11 @@ class NodeManager:
                         params[param_name] = state["current_user"][param_name]
                     else:
                         print(f"[警告] 工具 {tool_name} 的参数 {param_name} 未找到对应值")
-
+            
             try:
                 # 直接调用工具函数
                 response = tool_func(**params)
-
+                
                 # 处理支付特殊逻辑
                 if tool_name == "handle_payment":
                     new_state = update_state(state, response)
@@ -283,18 +279,18 @@ class NodeManager:
                             content="支付失败，请检查余额或更换支付方式"
                         ))
                         return new_state
-
+                
             except Exception as e:
                 error_msg = f"工具调用异常: {str(e)}"
                 print(f"[错误] {error_msg}")
                 response = f"抱歉，处理您的请求时出现了问题，请稍后再试. "
-
+            
             # 持久化消息
             ai_msg = {
                 "message_id": f"msg_{len(state['messages']) + 1}",
                 "type": "system",
                 "content": response,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "metadata": {
                     "tool_used": tool_name,
                     "intent": state.get("current_intent", "")
@@ -302,23 +298,23 @@ class NodeManager:
             }
             dialogue_manager.append_message(state["session_id"], ai_msg)
             print('[调试信息] AI输出已持久化')
-
+            
             return update_state(state, response)
-
+        
         self.nodes[tool_name] = tool_node
         return tool_func
-
+    
     def register_node(self, name, node_func):
         """注册普通节点"""
         self.nodes[name] = node_func
-
+    
     def add_edge(self, from_node, to_node, condition=None):
         """添加边或条件边"""
         if condition:
             self.conditional_edges.append((from_node, to_node, condition))
         else:
             self.edges.append((from_node, to_node))
-
+    
     def add_conditional_edges(self, from_node, condition, edge_map):
         """添加条件边映射"""
         # 确保edge_map是一个字典
@@ -326,42 +322,38 @@ class NodeManager:
             self.conditional_edges.append((from_node, condition, edge_map))
         else:
             # 如果是字符串或其他类型，转换为字典
-            edge_dict = {str(k): k for k in edge_map} if isinstance(edge_map, (list, tuple)) else {
-                str(edge_map): edge_map}
+            edge_dict = {str(k): k for k in edge_map} if isinstance(edge_map, (list, tuple)) else {str(edge_map): edge_map}
             self.conditional_edges.append((from_node, condition, edge_dict))
-
+    
     def build_graph(self, builder: StateGraph):
         """构建完整的图结构"""
         # 添加所有节点
         for name, node_func in self.nodes.items():
             builder.add_node(name, node_func)
-
+        
         # 添加普通边
         for from_node, to_node in self.edges:
             builder.add_edge(from_node, to_node)
-
+        
         # 添加条件边
         for from_node, condition, edge_map in self.conditional_edges:
             builder.add_conditional_edges(from_node, condition, edge_map)
 
-
 # 创建节点管理器实例
 node_manager = NodeManager()
-
 
 # 重新定义工具装饰器
 def tool(name):
     def decorator(func):
         return node_manager.register_tool(func)
-
     return decorator
-
 
 # 重新定义工具函数
 @tool("handle_web_search")
 def handle_web_search(query: str, dialect: str, gender: str, username: str) -> str:
-    """获取实时信息( 天气、新闻、本地事件等) """
-    start_time = time.time()  # 添加时间记录
+    """获取实时信息(天气、新闻、本地事件等)"""
+    start_time = time.time()
+    
     # 配置服务 URL
     service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
                   "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
@@ -402,17 +394,17 @@ def handle_web_search(query: str, dialect: str, gender: str, username: str) -> s
         "gender": gender,
     }).content
 
-    response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    response_time = time.time() - start_time
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")
 
     # 调试信息
     print("[调试信息] 节点输出: " + msg)
     return msg
 
 
+
 @tool("handle_chitchat")
-def handle_chitchat(region: str, name: str, dialect: str, session_id: str, history: List[dict], input: str, gender: str,
-                    username: str) -> str:
+def handle_chitchat(region: str, name: str, dialect: str, session_id: str, history: List[dict], input: str, gender: str, username: str) -> str:
     """日常对话处理，使用方言"""
     start_time = time.time()  # 添加时间记录
     print(f"[调试] 开始处理闲聊，session_id: {session_id}")
@@ -426,20 +418,18 @@ def handle_chitchat(region: str, name: str, dialect: str, session_id: str, histo
         # 避免使用其他函数的工具调用方式，直接实现web搜索逻辑
         service_url = "http://appbuilder.baidu.com/v2/ai_search/mcp/sse?" + \
                       "api_key=Bearer+bce-v3/ALTAK-lp91La4lRwuifo4dSNURU/70cb3ab0e2e87e267f6840f76e9fd052adfca877"
-
-        # 原异步方法
-        # loop = asyncio.new_event_loop()
-        # asyncio.set_event_loop(loop)
-        # web_info = loop.run_until_complete(fetch_search_results(input, service_url))
-        # loop.close()
+        
         # 使用同步方式调用异步函数
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # 如果已经在事件循环中，直接返回默认值
-            web_info = "无法获取相关信息"
+            # 如果已经在事件循环中，创建新的事件循环
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            web_info = new_loop.run_until_complete(fetch_search_results(input, service_url))
+            new_loop.close()
         else:
             web_info = loop.run_until_complete(fetch_search_results(input, service_url))
-
+        
         print("[调试信息] web信息\n", web_info)
     except Exception as e:
         print(f"[错误] web搜索异常: {str(e)}")
@@ -458,7 +448,7 @@ def handle_chitchat(region: str, name: str, dialect: str, session_id: str, histo
     可考的网络信息: {web_info}
     要求：简短、自然亲切、口语化、使用表情符号
     """
-
+    
     prompt = ChatPromptTemplate.from_template(prompt_template)
 
     chain = prompt | llm
@@ -480,20 +470,26 @@ def handle_chitchat(region: str, name: str, dialect: str, session_id: str, histo
     # 调试信息
     print("[调试信息] 节点输出: " + msg)
 
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(msg)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(msg)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
 
     return msg
 
 
 @tool("handle_shopping_guide")
-def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, username: str, ) -> str:
-    """提供商品导购和位置指引，支持自然语言查询"""
-    start_time = time.time()  # 添加时间记录
-
+def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, username: str, history: list = None) -> str:
+    """提供商品导购和位置指引，支持自然语言查询，支持上下文历史"""
+    start_time = time.time()
+    
+    # 拼接历史上下文
+    history_str = ""
+    if history:
+        history_str = "\n".join([f"{msg['type']}: {msg['content']}" for msg in history if msg.get('content')])
+    
     # 固定话术映射
     fixed_responses = {
         "扫码": "您好，请在前往收银台自助扫码买单. 使用桌面的扫码枪对准商品条形码，发出'滴'的一声即可，收银屏上会出现对应商品结算信息，并使用微信或者支付宝扫码付款. ",
@@ -506,7 +502,7 @@ def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, us
         "开门": "您好，请扫描门上的二维码出门. 欢迎下次光临，再见. ",
         "转人工": "您好，每个门店后台都有专属的值守人员实时看管，值守人员将通过实时监控画面了解到门店情况. 已为您转接人工. "
     }
-
+    
     # 检查是否匹配固定话术
     for key, response in fixed_responses.items():
         if key in query:
@@ -516,23 +512,26 @@ def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, us
             {response}
             注意要符合{remark}内容，使用表情
             用户信息: {username},性别{gender}
+            历史对话: {history_str}
             """)
-
+            
             msg = (prompt | llm).invoke({
                 "dialect": dialect,
                 "username": username,
                 "gender": gender,
-                "remark": remark
+                "remark": remark,
+                "history_str": history_str
             }).content
-
-            response_time = time.time() - start_time  # 添加时间记录
-            print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+            
+            response_time = time.time() - start_time
+            print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")
             print("[调试信息] 节点输出: " + msg)
             return msg
-
-    # 如果不是固定话术，先通过LLM标准化用户描述
+    
+    # 如果不是固定话术，先通过LLM标准化用户描述，带历史
     standardization_prompt = ChatPromptTemplate.from_template("""
-    你是一个商品描述标准化助手。请将用户的商品描述转换为标准化的商品名称和特征描述。
+    你是一个商品描述标准化助手。请将用户的商品描述和历史上下文结合，转换为标准化的商品名称和特征描述。
+    历史对话: {history_str}
     用户描述: {query}
     请按以下格式输出:
     1. 标准商品名称: [将代称、口语化、网络流行语转换为标准商品名称，例如：华子=中华香烟，快乐水=可乐]
@@ -543,72 +542,98 @@ def handle_shopping_guide(query: str, remark: str, dialect: str, gender: str, us
     - 如果用户没有明确提到商品，保持描述的原意
     - 如果用户使用了代称，转换为可能的商品名称
     - 输出格式必须有商品名称，其它字段可以为空
+    - 如果用户问"多少钱"，请结合历史对话中的商品信息回答
+    - 如果历史对话中提到了具体商品，优先使用该商品的信息
     """)
-
-    standardized_query = (standardization_prompt | llm).invoke({
-        "query": query
-    }).content
-
+    
+    try:
+        standardized_query = (standardization_prompt | llm).invoke({
+            "query": query,
+            "history_str": history_str
+        }).content
+    except Exception as e:
+        print(f"[错误] 标准化查询异常: {str(e)}")
+        standardized_query = query
+    
     print(f"[调试信息] 标准化后的查询: {standardized_query}")
-
-    # 使用标准化后的查询进行语义检索
-    docs = rag_manager.retrieve(
-        query=standardized_query,
-        search_type="mmr",
-        k=10,  # 减少检索数量
-        fetch_k=50,  # 减少候选数量
-        lambda_mult=0.5  # 调整多样性参数
-    )
-    print(f"[调试信息] 语义检索docs结果: {[d.metadata['product_name'] for d in docs]}")
-    product_info = [
-        f"· {doc.metadata['product_name']}( {doc.metadata['category']}) "
-        f" 位置: {doc.metadata['position']} 价格: {doc.metadata['product_price']}元"
-        for doc in docs
-    ]
+    
+    # 使用标准化后的查询进行语义检索，带历史
+    try:
+        docs = rag_manager.retrieve(
+            query=standardized_query + "\n历史对话: " + history_str,
+            search_type="mmr",
+            k=10,
+            fetch_k=50,
+            lambda_mult=0.5
+        )
+        print(f"[调试信息] 语义检索docs结果: {[d.metadata['product_name'] for d in docs]}")
+        product_info = [
+            f"· {doc.metadata['product_name']}( {doc.metadata['category']}) "
+            f" 位置: {doc.metadata['position']} 价格: {doc.metadata['product_price']}元"
+            for doc in docs
+        ]
+    except Exception as e:
+        print(f"[错误] 检索异常: {str(e)}")
+        product_info = ["无法获取商品信息"]
+    
     prompt = ChatPromptTemplate.from_template("""
     用{dialect}方言回答用户问题: {input}。
+    历史对话: {history_str}
     注意商品信息回答包含商品名称，位置和价格。
     可能的商品信息: {product_info},如果涉及则详细描述
     可能需要附{remark}内容,使用表情。
     用户信息: {username}, 性别{gender}。
-    要求：简短、直接、重点突出
+    要求：
+    1. 简短、直接、重点突出
+    2. 如果用户问"多少钱"，请结合历史对话中的商品信息回答
+    3. 如果历史对话中提到了具体商品，优先回答该商品的价格
+    4. 如果历史对话中有多个商品，请列出所有相关商品的价格
     """)
-    msg = (prompt | llm).invoke({
-        "product_info": "\n".join(product_info),
-        "remark": remark,
-        "input": query,
-        "dialect": dialect,
-        "username": username,
-        "gender": gender,
-    }).content
+    
+    try:
+        msg = (prompt | llm).invoke({
+            "product_info": "\n".join(product_info),
+            "remark": remark,
+            "input": query,
+            "dialect": dialect,
+            "username": username,
+            "gender": gender,
+            "history_str": history_str
+        }).content
+    except Exception as e:
+        print(f"[错误] LLM调用异常: {str(e)}")
+        msg = f"抱歉，我暂时无法回答这个问题。{str(e)}"
 
-    response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
-
+    response_time = time.time() - start_time
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")
+    
     print("[调试信息] 节点输出: " + msg)
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(msg)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(msg)
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
 
     return msg
 
 
 @tool("handle_recommendation")
-def handle_recommendation(query: str, remark: str, preferences: List[str], promotions: List[str], dialect: str,
-                          gender: str, username: str, ) -> str:
-    """根据用户偏好和在售商品提供推荐"""
+def handle_recommendation(query: str, remark: str, preferences: list, promotions: list, dialect: str, gender: str, username: str, history: list = None) -> str:
+    """根据用户偏好和在售商品提供推荐，支持上下文历史"""
     start_time = time.time()  # 添加时间记录
+    # 拼接历史上下文
+    history_str = ""
+    if history:
+        history_str = "\n".join([f"{msg['type']}: {msg['content']}" for msg in history if msg.get('content')])
     # 增强语义查询
-    semantic_query = f"推荐条件: {query},用户偏好: {', '.join(preferences)}"
+    semantic_query = f"推荐条件: {query},用户偏好: {', '.join(preferences)}\n历史: {history_str}"
 
     docs = rag_manager.retrieve(
         query=semantic_query,
         search_type="mmr",
-        k=5,  # 减少检索数量
-        fetch_k=50,  # 减少候选数量
-        lambda_mult=0.5,  # 调整多样性参数
+        k=5,                # 减少检索数量
+        fetch_k=50,         # 减少候选数量
+        lambda_mult=0.5,    # 调整多样性参数
         filter={'stock': {'$gt': "0"}},
     )
     print("first docs:", docs)
@@ -640,20 +665,13 @@ def handle_recommendation(query: str, remark: str, preferences: List[str], promo
         if any(pref in metadata['product_name'] for pref in preferences):
             highlight += "[偏好商品]"
 
-        rec = f"{highlight} {metadata['product_name']} ( {metadata['category']} ) \
-                ¥{metadata['product_price']} ←{metadata['position']}"
+        rec = f"{highlight} {metadata['product_name']} ( {metadata['category']} )                 ¥{metadata['product_price']} ←{metadata['position']}"
 
         recommendations.append(rec)
 
-    # for doc in docs[:5]:
-    #     name = doc.metadata.get('product_name')
-    #     price = doc.metadata.get('product_price', '价格未标')
-    #     pos = doc.metadata.get('position', '位置未标')
-    #     print(doc.metadata)
-    #     rec = f"- {name}( {price}元) {pos}"
-
     prompt = ChatPromptTemplate.from_template("""
     用{dialect}方言推荐商品: 
+    历史: {history_str}
     用户信息: {username},性别{gender}.
     推荐列表: {recommendations}.
     促销活动: {promotions}.
@@ -668,16 +686,18 @@ def handle_recommendation(query: str, remark: str, preferences: List[str], promo
         "dialect": dialect,
         "username": username,
         "gender": gender,
+        "history_str": history_str
     }).content
 
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
     print("[调试信息] 节点输出: " + msg)
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(msg)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(msg)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
     return msg
 
 
@@ -690,13 +710,15 @@ def handle_human_transfer(contact: str) -> str:
     {contact}"""
 
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
     print("[调试信息] 节点输出: " + msg)
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(msg)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(msg)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
 
     return msg
 
@@ -712,14 +734,15 @@ def handle_report(sales: int, profit: int, hot_products: List[str]) -> str:
     可视化建议: 柱状图( 销售额趋势) \n饼图( 商品占比) """
 
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
     print("[调试信息] 节点输出: " + msg)
 
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(msg)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(msg)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
 
     return msg
 
@@ -731,7 +754,7 @@ def handle_payment() -> str:
     msg = "支付成功！请取走商品" if random.random() > 0.2 else "支付失败，请重试"
 
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
     print("[调试信息] 节点输出: " + msg)
     return msg
 
@@ -742,17 +765,17 @@ def handle_payment() -> str:
 def update_user_info(existing_user_info: dict, new_user_info: dict) -> dict:
     """更新用户信息，合并新旧偏好"""
     updated_info = existing_user_info.copy()
-
+    
     # 更新基本信息( 包括所有可能的字段) 
     for key in ['username', 'gender', 'dialect', 'user_id']:
         if key in new_user_info and new_user_info[key]:
             updated_info[key] = new_user_info[key]
-
+    
     # 合并偏好列表，去重
     existing_prefs = set(existing_user_info.get('preferences', []))
     new_prefs = set(new_user_info.get('preferences', []))
     updated_info['preferences'] = list(existing_prefs.union(new_prefs))
-
+    
     return updated_info
 
 
@@ -798,11 +821,11 @@ def entry_node(state: State):
         # 更新用户信息
         existing_user_info = existing_dialogue.get("user_info", {})
         updated_user_info = update_user_info(existing_user_info, state["current_user"])
-
+        
         # 更新数据库中的用户信息
         dialogue_manager.update_user_info(session_id, updated_user_info)
         print(f"[调试信息] 已更新用户信息: {updated_user_info}")
-
+        
         # 更新当前状态中的用户信息
         state["current_user"] = updated_user_info
 
@@ -842,7 +865,7 @@ def personalized_welcome(state: State):
     print("[调试信息] recommends: ", recommends)
 
     # 获取系统时间
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     prompt = ChatPromptTemplate.from_template("""
     用户姓名{username},性别{gender}.
@@ -863,9 +886,9 @@ def personalized_welcome(state: State):
         "promotions": ",".join(state["shop_info"]["promotions"]),
         "dialect": state["current_user"]["dialect"]
     })
-
+    
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
 
     print("[调试信息] 欢迎节点输出: " + response.content)
 
@@ -884,11 +907,12 @@ def personalized_welcome(state: State):
     dialogue_manager.append_message(state["session_id"], welcome_msg)
     print('[调试信息] 欢迎词已持久化')
 
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(response.content)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(response.content)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
 
     return update_state(state, response.content)
 
@@ -931,7 +955,7 @@ def intent_recognition(state: State):
         start_index = msg.find(start)
         end_index = msg.find(end, start_index) + len(end)
         msg = msg[:start_index] + msg[end_index:]
-
+    
     print("[调试信息] 意图节点输出: " + msg)
 
     # 如果识别到告别意图，设置退出标志
@@ -953,7 +977,7 @@ def collect_human_input(state: State):
 
     try:
         user_input = input("用户(voice启动语音 暂时禁用): ")
-
+        
         # 检查是否进入语音输入模式
         # if user_input.lower() == "voice":
         #     print("已进入语音输入模式")
@@ -963,11 +987,11 @@ def collect_human_input(state: State):
         #         language_hints=["zh", "en"],
         #         disfluency_removal_enabled=True
         #     )
-
+            
         #     try:
         #         # 启动ASR并等待用户按回车结束
         #         asr.start()
-
+                
         #         # 停止ASR并获取结果
         #         asr.stop()
         #         user_input = asr.get_final_result()
@@ -976,7 +1000,7 @@ def collect_human_input(state: State):
         #         else:
         #             print("未检测到语音输入")
         #             return {"messages": state["messages"]}
-
+                
         #     except Exception as e:
         #         print(f"语音识别错误: {str(e)}")
         #         if asr:
@@ -1038,17 +1062,16 @@ node_manager.register_node("welcome", personalized_welcome)
 node_manager.register_node("collect_input", collect_human_input)
 node_manager.register_node("intent_recognition", intent_recognition)
 
-
 def personalized_goodbye(state: State):
     start_time = time.time()  # 添加时间记录
-
+    
     # 硬编码购买商品 实际使用时接入支付接口即可
     state["purchased_items"] = [
         "农夫山泉矿泉水",
         "可口可乐",
         "中华香烟",
     ]
-
+    
     """生成个性化的告别词"""
     prompt = ChatPromptTemplate.from_template("""
     用户信息: {username},性别{gender},使用{dialect}方言
@@ -1069,11 +1092,11 @@ def personalized_goodbye(state: State):
         "name": state["shop_info"]["name"],
         "purchased_items": ",".join(state["purchased_items"]) if state["purchased_items"] else "未购买商品"
     })
-
+    
     response_time = time.time() - start_time  # 添加时间记录
-    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")  # 添加时间记录
+    print(f"\n[AI响应时间] 生成耗时: {response_time:.2f} 秒")# 添加时间记录
     print("[调试信息] 告别节点输出: " + response.content)
-
+    
     # 持久化告别消息
     goodbye_msg = {
         "message_id": f"msg_{len(state['messages']) + 1}",
@@ -1087,15 +1110,15 @@ def personalized_goodbye(state: State):
     }
     dialogue_manager.append_message(state["session_id"], goodbye_msg)
     print('[调试信息] 告别词已持久化')
-
-    # TTS接入测试已注释
-    # try:
-    #     tts.synthesize_and_play(response.content)  # 同步播放语音
-    # except Exception as e:
-    #     print(f"[TTS相关] 语音播报失败: {str(e)}")
-
+    
+    # TTS接入测试
+    if ENABLE_TTS and tts:
+        try:
+            tts.synthesize_and_play(response.content)  # 同步播放语音
+        except Exception as e:
+            print(f"[TTS相关] 语音播报失败: {str(e)}")
+    
     return update_state(state, response.content)
-
 
 node_manager.register_node("goodbye", personalized_goodbye)
 
@@ -1143,7 +1166,7 @@ if __name__ == "__main__":
         "preferences": ["可乐", "香烟"],
         "username": "张三"
     }
-
+    
     products_docs_list = load_shop_products_csv(
         "data/store_cloud_duty_store_order_goods_day.csv")
     sample_shop = ShopInfo(
@@ -1161,7 +1184,7 @@ if __name__ == "__main__":
     builder.set_entry_point("entry")
     node_manager.build_graph(builder)
     flow = builder.compile()
-
+    
     # 绘图功能测试（保持原有代码）
     graph = flow.get_graph()
     print("\n=== 绘制langgraph图结构 ===")
@@ -1179,7 +1202,7 @@ if __name__ == "__main__":
             dot.edge(edge.source, edge.target, style='dashed')
         else:
             dot.edge(edge.source, edge.target)
-
+    
     output_path = os.path.join(os.getcwd(), 'conversation_flow')
     dot.render(output_path, view=False, cleanup=True)
     dot.format = 'png'
@@ -1193,13 +1216,13 @@ if __name__ == "__main__":
         "messages": [],
         "payment_status": "pending",
         "exit_flag": False,
-        "session_id": "shop-123_user-123_20250529114143"  # DEBUG 可选的指定session_id 表示在历史记录上追加
+        "session_id": "shop-123_user-123_20250603111110"  # DEBUG 可选的指定session_id 表示在历史记录上追加
     }
 
     # 修复后的运行对话循环 - 优化流式处理
     try:
         print("\n=== 开始对话 ===")
-
+        
         # 执行流程，获取事件流
         events = flow.stream(
             initial_state,
@@ -1213,7 +1236,7 @@ if __name__ == "__main__":
                 print("\n=== 流程到达END节点，对话结束 ===")
                 sys.exit(0)  # 直接退出程序
                 break
-
+            
             # 检查退出标志，但不立即退出，让流程继续到goodbye节点
             for node_name, node_state in event.items():
                 if isinstance(node_state, dict):
@@ -1221,7 +1244,7 @@ if __name__ == "__main__":
                         print(f"\n=== 节点 {node_name} 设置了退出标志，将进入告别流程 ===")
                         # 不立即退出，让流程继续到goodbye节点
                         break
-
+        
         print("=== 对话流程完成 ===")
     except GraphRecursionError:
         print("\n=== langgraph达到对话轮次上限 ===")
@@ -1246,7 +1269,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n=== 对话异常结束: {str(e)} ===")
         sys.exit(1)  # 异常退出使用非零状态码
-
+    
     print("程序退出")
 
 #   TODO 周边商品推荐功能
