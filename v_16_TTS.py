@@ -119,7 +119,7 @@ request_json = {
         "encoding": "mp3",          # 音频编码格式：wav/pcm/ogg_opus/mp3
         "rate": 24000,              # 音频采样率：8000/16000/24000
         "compression_rate": 1,       # opus格式时编码压缩比：[1, 20]
-        "speed_ratio": 1.0,         # 语速：[0.2, 3]
+        "speed_ratio": 1.2,         # 语速：[0.2, 3]
         "volume_ratio": 1.0,        # 音量：[0.1, 3]
         "pitch_ratio": 1.0,         # 音高：[0.1, 3]
         "emotion": "通用",          # 情感/风格

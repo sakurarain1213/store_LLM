@@ -1,8 +1,7 @@
-
 # 全局调试控制
 DEBUG_MODE = True
 # 全局混合流控制 开启则启用音频  否则仅文本
-USE_MIXED_STREAM = False  # 控制是否使用混合流输出
+USE_MIXED_STREAM = True  # 控制是否使用混合流输出  需要付钱
 
 '''
 TODO 虽然不影响结果 但是 修一下联网功能的异步报错 尽量不动本身 
@@ -123,7 +122,7 @@ llm = ChatOpenAI(
     base_url="https://api.siliconflow.cn/v1",
     model="THUDM/glm-4-9b-chat",
     temperature=0.4,
-    max_tokens=1000, # 核心  可以更大 RAG时
+    max_tokens=500, # 核心  可以更大 RAG时
     timeout=10,
     max_retries=1,
     api_key="sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit",
@@ -176,7 +175,7 @@ async def personalized_welcome_stream(state: State):
     今日活动: {promotions}
     使用{dialect}方言带表情符号的欢迎词，
     热情欢迎用户来到{region}的名为{name}的无人值守店。
-    注意要符合{remark}内容，使用表情。
+    注意要符合{remark}内容，使用表情。语言简洁！
     """)
 
     response = (prompt | llm).stream({

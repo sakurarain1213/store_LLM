@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>无人店值守对话大模型DEMO17:35</title>
+    <title>无人店值守对话大模型DEMO0612</title>
     <style>
         * {
             margin: 0;
@@ -404,241 +404,328 @@
     <script>
         let sessionId = null;
         let isTyping = false;
+        let audioQueue = []; // 用于缓存流式音频块
+        let isPlayingPrefixAudio = false; // 标记是否正在播放前缀音频
+        let isPlayingStreamAudio = false; // 标记是否正在播放流式音频
+        let audioContext = null; // Web Audio API上下文
+        let currentAudioSource = null; // 当前播放的音频源
 
-        // 音频队列管理器
-        class AudioQueueManager {
-            constructor() {
-                this.queue = new Map(); // 使用Map来存储音频块，key为sentence_id
-                this.isPlaying = false;
-                this.audioContext = null;
-                this.currentAudio = null;
-                this.debug = true;
-                this.currentSentenceId = null;
-                this.processedChunks = new Set(); // 用于跟踪已处理的音频块
-                this.lastPlayedSentenceId = null; // 记录上一次播放的sentence_id
-            }
-
-            log(...args) {
-                if (this.debug) {
-                    console.log('[AudioQueue]', ...args);
-                }
-            }
-
-            async init() {
-                if (!this.audioContext) {
-                    try {
-                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                        this.log('AudioContext initialized');
-                    } catch (e) {
-                        console.error('初始化AudioContext失败:', e);
-                        throw e;
-                    }
-                }
-            }
-
-            // 添加打印队列状态的方法
-            logQueueStatus(operation = '') {
-                this.log('当前队列状态 ' + (operation ? `(${operation})` : ''), {
-                    queueSize: this.queue.size,
-                    isPlaying: this.isPlaying,
-                    currentSentenceId: this.currentSentenceId,
-                    lastPlayedSentenceId: this.lastPlayedSentenceId,
-                    processedChunksCount: this.processedChunks.size,
-                    queueContent: Array.from(this.queue.entries()).map(([sentenceId, chunks]) => ({
-                        sentenceId,
-                        chunksCount: chunks.length,
-                        chunks: chunks.map(c => ({
-                            chunkId: c.chunk_id,
-                            isFinal: c.is_final,
-                            textLength: c.text ? c.text.length : 0
-                        }))
-                    }))
-                });
-            }
-
-            async addToQueue(audioChunk) {
-                // 创建唯一标识符
-                const chunkKey = `${audioChunk.sentence_id}_${audioChunk.chunk_id}`;
+        // 初始化音频上下文
+        async function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
                 
-                this.logQueueStatus('添加前');
-                
-                // 检查是否已处理过这个音频块
-                if (this.processedChunks.has(chunkKey)) {
-                    this.log('跳过重复的音频块:', {
-                        sentenceId: audioChunk.sentence_id,
-                        chunkId: audioChunk.chunk_id,
-                        text: audioChunk.text
-                    });
-                    return;
+                // 如果音频上下文被暂停，恢复它
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
                 }
-
-                // 标记为已处理
-                this.processedChunks.add(chunkKey);
-
-                // 如果是新的句子，创建新的数组
-                if (!this.queue.has(audioChunk.sentence_id)) {
-                    this.queue.set(audioChunk.sentence_id, []);
-                }
-
-                // 获取当前句子的音频块数组
-                const sentenceChunks = this.queue.get(audioChunk.sentence_id);
-                
-                // 检查是否已存在相同chunk_id的音频块
-                const existingChunkIndex = sentenceChunks.findIndex(chunk => chunk.chunk_id === audioChunk.chunk_id);
-                if (existingChunkIndex === -1) {
-                    // 如果不存在，添加新的音频块
-                    sentenceChunks.push(audioChunk);
-                    // 按chunk_id排序
-                    sentenceChunks.sort((a, b) => a.chunk_id - b.chunk_id);
-                }
-
-                this.logQueueStatus('添加后');
-
-                // 如果当前没有在播放，开始播放
-                if (!this.isPlaying) {
-                    await this.playNext();
-                }
-            }
-
-            async playNext() {
-                if (this.queue.size === 0) {
-                    this.isPlaying = false;
-                    this.log('队列为空，停止播放');
-                    this.logQueueStatus('队列为空');
-                    return;
-                }
-
-                this.isPlaying = true;
-                this.logQueueStatus('开始播放前');
-
-                // 获取第一个句子的所有音频块
-                const [sentenceId, chunks] = this.queue.entries().next().value;
-                this.currentSentenceId = sentenceId;
-
-                // 检查是否需要延迟播放
-                if (this.lastPlayedSentenceId !== null && this.lastPlayedSentenceId !== sentenceId) {
-                    this.log('检测到新的句子，等待1秒...', {
-                        lastSentenceId: this.lastPlayedSentenceId,
-                        newSentenceId: sentenceId
-                    });
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-
-                this.log('开始播放句子:', {
-                    sentenceId: sentenceId,
-                    chunksCount: chunks.length,
-                    chunks: chunks.map(c => ({
-                        sentenceId: c.sentence_id,
-                        chunkId: c.chunk_id,
-                        isFinal: c.is_final
-                    }))
-                });
-
-                // 更新lastPlayedSentenceId
-                this.lastPlayedSentenceId = sentenceId;
-
-                try {
-                    // 逐个播放chunks，每个chunk之间添加停顿
-                    for (let i = 0; i < chunks.length; i++) {
-                        const chunk = chunks[i];
-                        
-                        // 合并当前chunk的音频数据
-                        const mergedAudioData = await this.mergeAudioChunks([chunk]);
-                        
-                        // 解码音频数据
-                        const audioBuffer = await this.audioContext.decodeAudioData(mergedAudioData);
-                        
-                        // 创建音频源
-                        const source = this.audioContext.createBufferSource();
-                        source.buffer = audioBuffer;
-                        source.connect(this.audioContext.destination);
-                        
-                        this.currentAudio = source;
-                        
-                        // 打印当前正在播放的音频块信息
-                        this.log('正在播放音频块:', {
-                            sentenceId: chunk.sentence_id,
-                            chunkId: chunk.chunk_id,
-                            text: chunk.text
-                        });
-
-                        // 播放当前chunk
-                        await new Promise((resolve) => {
-                            source.onended = resolve;
-                            source.start(0);
-                        });
-
-                        // 如果不是最后一个chunk，添加0.2秒的停顿
-                        if (i < chunks.length - 1) {
-                            await new Promise(resolve => setTimeout(resolve, 200));
-                        }
-                    }
-
-                    this.log('句子播放完成:', {
-                        sentenceId: sentenceId
-                    });
-                    
-                    // 移除已播放的句子
-                    this.queue.delete(sentenceId);
-                    this.logQueueStatus('句子播放完成');
-                    
-                    // 继续播放下一个句子
-                    this.playNext();
-
-                } catch (error) {
-                    console.error('播放音频错误:', error);
-                    // 出错时移除当前句子并继续播放下一个
-                    this.queue.delete(sentenceId);
-                    this.logQueueStatus('播放错误');
-                    this.playNext();
-                }
-            }
-
-            async mergeAudioChunks(chunks) {
-                // 将所有音频块的数据合并
-                const allData = chunks.map(chunk => atob(chunk.data));
-                const totalLength = allData.reduce((acc, data) => acc + data.length, 0);
-                const mergedArray = new Uint8Array(totalLength);
-                
-                let offset = 0;
-                for (const data of allData) {
-                    for (let i = 0; i < data.length; i++) {
-                        mergedArray[offset + i] = data.charCodeAt(i);
-                    }
-                    offset += data.length;
-                }
-
-                return mergedArray.buffer;
-            }
-
-            stop() {
-                if (this.currentAudio) {
-                    try {
-                        this.currentAudio.stop();
-                    } catch (e) {
-                        console.warn('停止当前音频时出错:', e);
-                    }
-                    this.currentAudio = null;
-                }
-                this.queue.clear();
-                this.isPlaying = false;
-                this.currentSentenceId = null;
-                this.lastPlayedSentenceId = null;
-                this.processedChunks.clear();
-                if (this.audioContext) {
-                    try {
-                        this.audioContext.close();
-                    } catch (e) {
-                        console.warn('关闭AudioContext时出错:', e);
-                    }
-                    this.audioContext = null;
-                }
-                this.log('音频播放停止，所有状态已重置');
-                this.logQueueStatus('停止播放');
             }
         }
 
-        const audioQueueManager = new AudioQueueManager();
+        // 前缀配置
+        const prefixConfig = {
+            new: {
+                text: "叮咚 ~ 您好，欢迎光临小店！",
+                audioFile: "welcome.mp3"
+            },
+            chitchat: {
+                text: "小助手很高兴和您聊天哦~",
+                audioFile: "chitchat.mp3"
+            },
+            shopping_guide: {
+                text: "让我为您介绍一下店内的商品吧~",
+                audioFile: "shopping_guide.mp3"
+            },
+            recommendation: {
+                text: "让我为您推荐一些不错的商品~",
+                audioFile: "recommendation.mp3"
+            },
+            payment: {
+                text: "好的，让我帮您处理支付问题~",
+                audioFile: "payment.mp3"
+            },
+            goodbye: {
+                text: "小助手在这里感谢您的光临~",
+                audioFile: "goodbye.mp3"
+            },
+            web_search: {
+                text: "让我在网络上查询一下相关信息~",
+                audioFile: "web_search.mp3"
+            },
+            human_transfer: {
+                text: "我这就帮您转接人工客服~",
+                audioFile: "human_transfer.mp3"
+            },
+            report: {
+                text: "好的，我来汇报一下店内的状况哦~",
+                audioFile: "report.mp3"
+            },
+            default: {
+                text: "小助手不是很明白呢，我可以导购，推荐，或者随便聊聊天哦。",
+                audioFile: "default.mp3"
+            }
+        };
+
+        // 语义分析函数  目前依然使用LLM 无本地语义模型
+        async function analyzeUserIntent(userInput) {
+            const api_key = "sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit";
+            
+            const prompt = `你是无人实体零售店铺对话助手。分析用户输入意图，只返回对应类型关键词。
+用户输入："${userInput}"
+
+意图类型映射：
+- chitchat: 闲聊、聊天、问候、情感交流
+- shopping_guide: 导购、介绍商品、了解产品、商品详情、价格咨询
+- recommendation: 推荐、建议、什么好、帮我选
+- payment: 支付、付款、买单、结账
+- goodbye: 再见、拜拜、走了、谢谢再见
+- web_search: 查询、搜索、网上找、了解信息
+- human_transfer: 人工客服、转人工、找客服
+- report: 汇报、统计、数据、情况
+
+只返回一个类型关键词，如果无法确定则返回：default`;
+
+            const options = {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${api_key}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "model": "THUDM/glm-4-9b-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": false,
+                    "max_tokens": 10,
+                    "temperature": 0.1,
+                    "top_p": 0.8
+                })
+            };
+
+            try {
+                // 设置650ms超时
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout')), 650)
+                );
+                
+                const fetchPromise = fetch('https://api.siliconflow.cn/v1/chat/completions', options)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        return response.json();
+                    });
+
+                const response = await Promise.race([fetchPromise, timeoutPromise]);
+                
+                if (response.choices && response.choices[0] && response.choices[0].message) {
+                    const content = response.choices[0].message.content.trim().toLowerCase();
+                    
+                    // 过滤和验证返回的类型
+                    const validTypes = [
+                        'chitchat', 'shopping_guide', 'recommendation', 
+                        'payment', 'goodbye', 'web_search', 
+                        'human_transfer', 'report'
+                    ];
+                    
+                    // 检查返回的内容是否为有效类型
+                    for (const type of validTypes) {
+                        if (content.includes(type)) {
+                            return type;
+                        }
+                    }
+                    
+                    // 如果没有匹配的有效类型，返回default
+                    return 'default';
+                } else {
+                    console.error('API返回格式异常:', response);
+                    return 'default';
+                }
+                
+            } catch (error) {
+                if (error.message === 'Timeout') {
+                    console.warn('语义分析超时，使用默认类型');
+                } else {
+                    console.error('语义分析API调用失败:', error);
+                }
+                return 'default';
+            }
+        }
+
+        // 统一前缀处理函数
+        async function handlePrefix(type, userInput = null) {
+            let prefixType = type;
+            
+            // 如果是continue类型，使用语义分析判断具体类型
+            if (type === 'continue' && userInput) {
+                prefixType = await analyzeUserIntent(userInput);
+            }
+            
+            const config = prefixConfig[prefixType];
+            return {
+                text: config.text,
+                audioFile: config.audioFile
+            };
+        }
+
+        // 播放前缀音频函数
+        async function playPrefixAudio(audioFile) {
+            try {
+                isPlayingPrefixAudio = true;
+                const audio = new Audio(`audio_file/${audioFile}`);
+                
+                await new Promise((resolve, reject) => {
+                    audio.onended = () => {
+                        console.log('前缀音频播放完成');
+                        isPlayingPrefixAudio = false;
+                        // 前缀音频播放完成后，开始播放排队的音频流
+                        playNextAudioChunk();
+                        resolve();
+                    };
+                    audio.onerror = (error) => {
+                        console.error('前缀音频播放错误:', error);
+                        isPlayingPrefixAudio = false;
+                        reject(error);
+                    };
+                    audio.play();
+                });
+            } catch (error) {
+                console.warn('前缀音频播放失败:', error);
+                isPlayingPrefixAudio = false;
+                // 即使前缀音频播放失败，也要开始播放音频流
+                playNextAudioChunk();
+            }
+        }
+
+        // 将base64音频数据转换为AudioBuffer
+        async function base64ToAudioBuffer(base64Data) {
+            try {
+                await initAudioContext();
+                
+                // 解码base64数据
+                const binaryString = atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                // 解码音频数据
+                const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
+                return audioBuffer;
+            } catch (error) {
+                console.error('音频数据转换失败:', error);
+                throw error;
+            }
+        }
+
+        // 播放音频buffer
+        async function playAudioBuffer(audioBuffer) {
+            try {
+                await initAudioContext();
+                
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                currentAudioSource = source;
+                
+                return new Promise((resolve, reject) => {
+                    source.onended = () => {
+                        console.log('音频块播放完成');
+                        currentAudioSource = null;
+                        resolve();
+                    };
+                    
+                    source.onerror = (error) => {
+                        console.error('音频播放错误:', error);
+                        currentAudioSource = null;
+                        reject(error);
+                    };
+                    
+                    source.start();
+                });
+            } catch (error) {
+                console.error('播放音频buffer失败:', error);
+                throw error;
+            }
+        }
+
+        // 播放下一个音频块
+        async function playNextAudioChunk() {
+            // 如果正在播放前缀音频或流式音频，等待
+            if (isPlayingPrefixAudio || isPlayingStreamAudio) {
+                return;
+            }
+            
+            // 如果队列为空，返回
+            if (audioQueue.length === 0) {
+                return;
+            }
+            
+            // 取出队列中的第一个音频块
+            const audioChunk = audioQueue.shift();
+            
+            try {
+                isPlayingStreamAudio = true;
+                console.log('开始播放音频块:', {
+                    sentenceId: audioChunk.sentence_id,
+                    chunkId: audioChunk.chunk_id,
+                    text: audioChunk.text,
+                    isFinal: audioChunk.is_final
+                });
+                
+                const audioBuffer = await base64ToAudioBuffer(audioChunk.data);
+                await playAudioBuffer(audioBuffer);
+                
+                console.log('音频块播放完成:', {
+                    sentenceId: audioChunk.sentence_id,
+                    chunkId: audioChunk.chunk_id
+                });
+                
+            } catch (error) {
+                console.error('播放音频块失败:', error);
+            } finally {
+                isPlayingStreamAudio = false;
+                // 递归播放下一个音频块
+                setTimeout(() => playNextAudioChunk(), 10);
+            }
+        }
+
+        // 添加音频块到队列
+        function addAudioChunkToQueue(audioChunk) {
+            console.log('添加音频块到队列:', {
+                sentenceId: audioChunk.sentence_id,
+                chunkId: audioChunk.chunk_id,
+                text: audioChunk.text,
+                dataLength: audioChunk.data ? audioChunk.data.length : 0,
+                isFinal: audioChunk.is_final
+            });
+            
+            audioQueue.push(audioChunk);
+            
+            // 如果当前没有播放前缀音频和流式音频，立即开始播放
+            if (!isPlayingPrefixAudio && !isPlayingStreamAudio) {
+                playNextAudioChunk();
+            }
+        }
+
+        // 清空音频队列
+        function clearAudioQueue() {
+            audioQueue = [];
+            if (currentAudioSource) {
+                currentAudioSource.stop();
+                currentAudioSource = null;
+            }
+            isPlayingStreamAudio = false;
+        }
+
+        // 打字机效果函数
+        async function typeText(element, text, speed = 50) {
+            element.textContent = '';
+            for (let i = 0; i < text.length; i++) {
+                element.textContent += text[i];
+                await new Promise(resolve => setTimeout(resolve, speed));
+            }
+        }
 
         const modalOverlay = document.getElementById('modalOverlay');
         const chatContainer = document.getElementById('chatContainer');
@@ -695,13 +782,12 @@
 
         // 新建对话
         newChatBtn.addEventListener('click', () => {
-            // 确保清理所有状态
-            audioQueueManager.stop();
             sessionId = null;
             isTyping = false;
             sendBtn.disabled = false;
             cancelBtn.disabled = true;
             chatMessages.innerHTML = '';
+            clearAudioQueue(); // 清空音频队列
             modalOverlay.style.display = 'flex';
             chatContainer.style.display = 'none';
         });
@@ -711,12 +797,11 @@
             const requestStartTime = performance.now();
             
             try {
-                // 确保清理之前的状态
-                audioQueueManager.stop();
                 sessionId = null;
                 isTyping = false;
                 sendBtn.disabled = false;
                 cancelBtn.disabled = true;
+                clearAudioQueue(); // 清空之前的音频队列
                 
                 const response = await fetch('http://localhost:8000/chat/new/stream', {
                     method: 'POST',
@@ -730,10 +815,19 @@
                     throw new Error('网络请求失败');
                 }
 
-                // 立即创建AI消息气泡
                 const aiMessage = addMessage('', 'ai');
-
-                await processSSEStream(response, aiMessage, requestStartTime);
+                const prefixData = await handlePrefix('new');
+                
+                // 立即并行启动三个操作：
+                // 1. SSE流处理（立即开始，不等待前缀）
+                // 2. 前缀文本显示
+                // 3. 前缀音频播放
+                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
+                const typePromise = typeText(aiMessage.bubble, prefixData.text);
+                const audioPromise = playPrefixAudio(prefixData.audioFile);
+                
+                // 等待SSE流完成
+                await ssePromise;
                 
             } catch (error) {
                 console.error('开始新对话失败:', error);
@@ -751,14 +845,12 @@
             
             isTyping = true;
             sendBtn.disabled = true;
-            cancelBtn.disabled = false;  // 启用打断按钮
+            cancelBtn.disabled = false;
+            clearAudioQueue(); // 清空之前的音频队列
 
             const requestStartTime = performance.now();
 
             try {
-                // 确保清理之前的状态
-                audioQueueManager.stop();
-                
                 const response = await fetch('http://localhost:8000/chat/continue/stream', {
                     method: 'POST',
                     headers: {
@@ -774,10 +866,19 @@
                     throw new Error('网络请求失败');
                 }
 
-                // 立即创建AI消息气泡
                 const aiMessage = addMessage('', 'ai');
+                const prefixData = await handlePrefix('continue', message);
+                
+                // 立即并行启动三个操作：
+                // 1. SSE流处理（立即开始，不等待前缀）
+                // 2. 前缀文本显示
+                // 3. 前缀音频播放
+                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
+                const typePromise = typeText(aiMessage.bubble, prefixData.text);
+                const audioPromise = playPrefixAudio(prefixData.audioFile);
 
-                await processSSEStream(response, aiMessage, requestStartTime);
+                // 等待SSE流完成
+                await ssePromise;
 
             } catch (error) {
                 console.error('发送消息失败:', error);
@@ -785,7 +886,7 @@
             } finally {
                 isTyping = false;
                 sendBtn.disabled = false;
-                cancelBtn.disabled = true;  // 禁用打断按钮
+                cancelBtn.disabled = true;
             }
         }
 
@@ -794,7 +895,6 @@
             if (!sessionId || !isTyping) return;
 
             try {
-                // 调用后端取消接口
                 const response = await fetch('http://localhost:8000/chat/cancel_audio', {
                     method: 'POST',
                     headers: {
@@ -809,15 +909,11 @@
                     throw new Error('取消请求失败');
                 }
 
-                // 停止音频播放
-                audioQueueManager.stop();
-                
-                // 重置状态
                 isTyping = false;
                 sendBtn.disabled = false;
                 cancelBtn.disabled = true;
+                clearAudioQueue(); // 清空音频队列
 
-                // 添加提示消息
                 addMessage('已打断当前对话', 'ai');
 
             } catch (error) {
@@ -849,7 +945,7 @@
         }
 
         // SSE流处理函数
-        async function processSSEStream(response, aiMessage, requestStartTime) {
+        async function processSSEStream(response, aiMessage, requestStartTime, prefixData) {
             const reader = response.body.getReader();
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
@@ -859,13 +955,53 @@
             let firstAudioTime = null;
             let accumulatedText = '';
             let responseTimeDiv = null;
-            let processedAudioChunks = new Set();
+            
+            // 流队列 - 用于缓存所有流数据
+            let streamQueue = {
+                textChunks: [],
+                audioChunks: []
+            };
+            let prefixCompleted = false;
 
-            await audioQueueManager.init();
+            console.log('立即开始处理SSE流...');
 
-            console.log('开始处理SSE流...');
+            // 流队列消费函数
+            const consumeStreamQueue = async () => {
+                if (!prefixCompleted) return;
+                
+                console.log('前缀完成，开始消费流队列');
+                
+                // 消费所有缓存的文本块
+                while (streamQueue.textChunks.length > 0) {
+                    const textChunk = streamQueue.textChunks.shift();
+                    aiMessage.bubble.textContent += textChunk;
+                }
+                
+                // 消费所有缓存的音频块
+                while (streamQueue.audioChunks.length > 0) {
+                    const audioChunk = streamQueue.audioChunks.shift();
+                    addAudioChunkToQueue(audioChunk);
+                }
+                
+                // 触发UI更新
+                void aiMessage.bubble.offsetHeight;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+
+            // 检查前缀完成状态并立即消费队列
+            const checkPrefixAndConsume = async () => {
+                if (!prefixCompleted && !isPlayingPrefixAudio) {
+                    prefixCompleted = true;
+                    console.log('前缀音频完成，立即消费流队列');
+                    await consumeStreamQueue();
+                }
+            };
+
+            // 高频检查前缀完成状态（每10ms检查一次以确保最快响应）
+            const prefixChecker = setInterval(checkPrefixAndConsume, 10);
 
             try {
+                // 立即开始处理流数据，不等待任何前缀操作
                 while (true) {
                     const { done, value } = await reader.read();
                     const currentTime = performance.now();
@@ -904,43 +1040,43 @@
                                 }
                                 
                                 if (data.type === 'audio_chunk') {
-                                    const chunkKey = `${data.sentence_id}_${data.chunk_id}`;
-                                    
-                                    if (processedAudioChunks.has(chunkKey)) {
-                                        console.log('跳过重复的音频块:', {
-                                            sentenceId: data.sentence_id,
-                                            chunkId: data.chunk_id,
-                                            text: data.text
-                                        });
-                                        continue;
-                                    }
-
-                                    processedAudioChunks.add(chunkKey);
-
                                     if (firstAudioTime === null) {
                                         firstAudioTime = currentTime;
-                                        console.log('收到第一个音频块:', {
-                                            timestamp: new Date().toISOString(),
-                                            chunkSize: data.data ? data.data.length : 0,
-                                            sentenceId: data.sentence_id,
-                                            chunkId: data.chunk_id
-                                        });
+                                        console.log('收到第一个音频块，立即缓存到队列');
                                         responseTimeDiv.textContent += ` | 首音响应时间: ${((firstAudioTime - requestStartTime) / 1000).toFixed(2)}s`;
                                     }
                                     
-                                    await audioQueueManager.addToQueue(data);
+                                    const audioChunk = {
+                                        sentence_id: data.sentence_id,
+                                        chunk_id: data.chunk_id,
+                                        data: data.data,
+                                        text: data.text,
+                                        is_final: data.is_final
+                                    };
+                                    
+                                    // 立即缓存到流队列
+                                    streamQueue.audioChunks.push(audioChunk);
+                                    
+                                    // 如果前缀已完成，立即消费
+                                    if (prefixCompleted) {
+                                        const cachedChunk = streamQueue.audioChunks.shift();
+                                        addAudioChunkToQueue(cachedChunk);
+                                    }
+                                    
                                     continue;
                                 }
                                 
                                 if (data.type === 'text' && data.response !== undefined && data.status === 'success') {
-                                    aiMessage.bubble.textContent += data.response;
-                                    void aiMessage.bubble.offsetHeight;
-                                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    // 立即缓存到流队列
+                                    streamQueue.textChunks.push(data.response);
                                     accumulatedText += data.response;
                                     
-                                    if (shouldTriggerTTS(accumulatedText)) {
-                                        await processTTS(accumulatedText);
-                                        accumulatedText = '';
+                                    // 如果前缀已完成，立即消费
+                                    if (prefixCompleted) {
+                                        const cachedText = streamQueue.textChunks.shift();
+                                        aiMessage.bubble.textContent += cachedText;
+                                        void aiMessage.bubble.offsetHeight;
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
                                     }
                                 }
                             } catch (e) {
@@ -950,49 +1086,27 @@
                     }
                 }
             } finally {
+                clearInterval(prefixChecker);
                 reader.releaseLock();
                 
-                if (accumulatedText) {
-                    await processTTS(accumulatedText);
-                }
-
+                // 最终确保消费完所有队列内容
+                prefixCompleted = true;
+                await consumeStreamQueue();
+                
                 if (lastStreamTime !== null && responseTimeDiv) {
                     responseTimeDiv.textContent += ` | 文本流传输: ${((lastStreamTime - firstStreamTime) / 1000).toFixed(2)}s`;
                 }
 
-                // 重置状态
                 isTyping = false;
                 sendBtn.disabled = false;
                 cancelBtn.disabled = true;
+                
+                console.log('SSE流处理完成，队列消费完毕');
             }
         }
 
-        // TTS处理函数
-        async function processTTS(text) {
-            try {
-                // TODO: 实现TTS流式处理
-                console.log('TTS处理:', text);
-            } catch (error) {
-                console.error('TTS处理错误:', error.message);
-            }
-        }
-
-        // 判断是否应该触发TTS
-        function shouldTriggerTTS(text) {
-            // 当文本达到一定长度或遇到标点符号时触发
-            const punctuation = /[。！？.!?]/;
-            return text.length >= 20 || punctuation.test(text);
-        }
-
-        // ASR处理函数框架
-        async function startASR() {
-            // TODO: 实现ASR流式处理
-            // 1. 初始化音频流
-            // 2. 实时发送音频到ASR API
-            // 3. 接收识别结果
-            // 4. 自动检测停顿和结束
-            console.log('开始ASR...');
-        }
+        // 页面加载时初始化音频上下文（可选，也可以在用户第一次交互时初始化）
+        document.addEventListener('click', initAudioContext, { once: true });
     </script>
 </body>
 </html>
