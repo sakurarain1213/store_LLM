@@ -1,22 +1,41 @@
-# 无人店铺值守对话大模型 原理与演示
-主程序：v_xx.py
+# 无人店铺值守对话大模型DEMO 原理与演示
+
+后端入口程序：v_xx_server.py
+网页端入口程序：LANG_clint/v_xx_clint.html
+
+## 界面
+<img src="https://i.postimg.cc/L86V3s5D/2.png" style="width: 100%; height: auto;" />
+
+
+## 用户体验
+ASR实时文本显示延迟<0.5s
+从用户说话结束到显示首token <1s
+从用户说话结束到播放首音频片 <1.5s
+支持打断AI说话
+
+
+
+
+## 特性
+代码极简 便于部署 模块解耦 可定制可拓展
+
 ## 技术栈
 
 - 框架: LangGraph
 - 大模型: Qwen2.5-7B-Instruct + DeepSeekV3
-- 数据存储: MongoDB (对话持久化)
+- 数据存储: MongoDB
 - RAG检索增强: 
   - 向量引擎: FAISS 
   - 嵌入模型: HuggingFace Embeddings
 - 搜索服务: DuckDuckGo + 百度搜索
 - 语音能力:
-  - ASR: 阿里Paraformer-v2 (支持中英文+18种方言)
-  - TTS: 阿里CosyVoice (8音色中英文)
+  - ASR: 科大讯飞 (支持中英文)
+  - TTS: 火山引擎 (多音色中英文)
+
 
 ## 功能模块
 
-[![1.png](https://i.postimg.cc/LXQS24bv/1.png)](https://postimg.cc/34GVZh7D)
-
+<img src="https://i.postimg.cc/Dfsp8tkf/1.png" style="width: 100%; height: auto;" />
 
 Tools：
 
@@ -294,5 +313,5 @@ LLM节点输出: 支付成功！请取走商品
 ## 其它
 
 成本控制：LLM API免费  网络API免费  ASR+TTS少量收费
-效率：平均每轮生成时间5s
+
 
