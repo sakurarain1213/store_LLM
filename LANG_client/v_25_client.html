@@ -1,9 +1,12 @@
+<!--目前 提取了配置项  暂无问题  需要经过复杂的评审 压测 适配等 上线-->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>无人店值守对话大模型DEMO0612</title>
+    <title>无人店值守对话大模型DEMO0613版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <!--注意最好使用本地js脚本比较稳定 DEMO先不用script src="example/crypto-js.js"></script-->
     <style>
         * {
             margin: 0;
@@ -328,6 +331,48 @@
         .message.ai .response-time {
             text-align: left;
         }
+
+        /* ASR相关样式 */
+        .voice-btn {
+            width: 50px;
+            height: 50px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+        
+        .voice-btn.inactive {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .voice-btn.active {
+            background: #dc3545;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .asr-status {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            text-align: center;
+        }
+        
+        .asr-status.active {
+            color: #dc3545;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
     </style>
 </head>
 <body>
@@ -396,9 +441,11 @@
         </div>
         <div class="chat-messages" id="chatMessages"></div>
         <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="输入消息..." maxlength="500">
+            <button class="voice-btn inactive" id="voiceBtn">🎤</button>
+            <input type="text" id="messageInput" placeholder="输入消息或点击语音按钮..." maxlength="500">
             <button class="send-btn" id="sendBtn">➤</button>
         </div>
+        <div class="asr-status" id="asrStatus">语音识别已准备</div>
     </div>
 
     <script>
@@ -410,7 +457,677 @@
         let audioContext = null; // Web Audio API上下文
         let currentAudioSource = null; // 当前播放的音频源
 
-        // 初始化音频上下文
+        // ASR相关变量
+        let asrWebSocket = null;
+        let isRecording = false;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let asrText = '';
+        let accumulatedText = ''; // 累积的完整文本
+        let currentSentence = ''; // 当前正在识别的句子
+        let asrTimeout = null;
+        let processor = null;
+        let source = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 3;
+        const RECONNECT_DELAY = 1000; // 1秒
+        
+        // 音频缓冲区
+        let audioBuffer = new Float32Array(0);
+        let sendInterval = null;
+        const SEND_INTERVAL = 40; // 40ms发送一次
+        const SAMPLES_PER_CHUNK = Math.floor(16000 * SEND_INTERVAL / 1000); // 每40ms的采样点数
+        
+        // 保活机制
+        let keepAliveInterval = null;
+        const KEEP_ALIVE_INTERVAL = 10000; // 每10秒发送一次空音频  避免讯飞ASR服务的10700/37005 的15s静默错误
+        const EMPTY_AUDIO_BUFFER = new Float32Array(SAMPLES_PER_CHUNK).fill(0); // 创建空音频缓冲区
+
+        // 核心配置  直接影响对话延时
+        const DIALOG_TIMING_CONFIG = {
+            // 语音识别无新内容自动发送延时
+            ASR_SILENCE_TIMEOUT: 1000,  // 核心参数：语音识别停止后等待时间
+            // 意图识别超时时间
+            INTENT_ANALYSIS_TIMEOUT: 650,  // 核心参数：意图分析API调用超时时间
+            // 其他可添
+        };
+
+        // 生成讯飞ASR签名
+        function generateSigna(appid, ts, apiKey) {
+            const baseString = appid + ts;
+            const md5 = CryptoJS.MD5(baseString).toString();
+            const sha1 = CryptoJS.HmacSHA1(md5, apiKey);
+            return CryptoJS.enc.Base64.stringify(sha1);
+        }
+        
+        // 讯飞ASR配置
+        const ASR_CONFIG = {
+            appid: 'c5f02e97', // 替换为你的appid
+            apiKey: 'fb6c5211f07dc8d9edc46177118b3658', // 替换为你的apiKey
+            wsUrl: 'wss://rtasr.xfyun.cn/v1/ws'
+        };
+        //https://console.xfyun.cn/services/rta     讯飞用量信息 免费5h 可每百元充值
+        //https://www.xfyun.cn/doc/asr/rtasr/API.html  讯飞流式ASR文档
+
+        // DOM元素
+        const modalOverlay = document.getElementById('modalOverlay');
+        const chatContainer = document.getElementById('chatContainer');
+        const chatForm = document.getElementById('chatForm');
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const newChatBtn = document.getElementById('newChatBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const asrStatus = document.getElementById('asrStatus');
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 预检查麦克风权限
+            try {
+                const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                if (permissionStatus.state === 'granted') {
+                    asrStatus.textContent = '语音识别已准备';
+                } else if (permissionStatus.state === 'denied') {
+                    asrStatus.textContent = '麦克风权限被拒绝，请在浏览器设置中允许';
+                } else {
+                    asrStatus.textContent = '语音识别已准备（首次使用需要授权）';
+                }
+            } catch (error) {
+                asrStatus.textContent = '语音识别已准备';
+            }
+            console.log('ASR系统已初始化');
+        });
+
+        // 语音按钮点击事件
+        voiceBtn.addEventListener('click', async (event) => {
+            // 阻止事件冒泡
+            event.preventDefault();
+            event.stopPropagation();
+            
+            console.log('语音按钮被点击，当前录音状态:', isRecording);
+            
+            if (isRecording) {
+                console.log('停止录音');
+                stopVoiceRecording();
+            } else {
+                console.log('开始录音');
+                // 在用户点击时才申请权限，并提供更好的用户体验
+                voiceBtn.disabled = true;
+                
+                try {
+                    await startVoiceRecording();
+                } catch (error) {
+                    console.error('启动录音失败:', error);
+                    asrStatus.textContent = '需要允许麦克风权限才能使用语音功能';
+                    voiceBtn.disabled = false;
+                }
+            }
+        });
+
+        // 开始语音录制
+        async function startVoiceRecording() {
+            try {
+                // 先检查是否已有权限
+                let hasPermission = false;
+                try {
+                    const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                    hasPermission = permissionStatus.state === 'granted';
+                } catch (e) {
+                    // 如果不支持permissions API，继续尝试获取媒体流
+                }
+
+                // 如果没有权限或不确定，显示请求权限的提示
+                if (!hasPermission) {
+                    asrStatus.textContent = '正在申请麦克风权限...';
+                }
+
+                // 获取音频流（只会在第一次时弹出权限请求）
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                // 创建音频上下文
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // 创建音频源
+                source = audioContext.createMediaStreamSource(audioStream);
+                
+                // 使用createScriptProcessor，但优化处理方式
+                processor = audioContext.createScriptProcessor(2048, 1, 1);
+                
+                // 音频处理
+                processor.onaudioprocess = (e) => {
+                    if (!isRecording) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // 将新数据添加到缓冲区
+                    const newBuffer = new Float32Array(audioBuffer.length + inputData.length);
+                    newBuffer.set(audioBuffer);
+                    newBuffer.set(inputData, audioBuffer.length);
+                    audioBuffer = newBuffer;
+                };
+
+                // 连接音频节点
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                isRecording = true;
+                voiceBtn.className = 'voice-btn active';
+                voiceBtn.disabled = false; // 确保按钮可用
+                asrStatus.textContent = '正在录音...';
+                asrStatus.className = 'asr-status active';
+                
+                // 连接ASR WebSocket
+                await connectASRWebSocket();
+                
+                // 开始定时发送音频数据
+                startAudioSending();
+                
+                // 启动保活机制
+                startKeepAlive();
+                
+            } catch (error) {
+                console.error('启动录音失败:', error);
+                if (error.name === 'NotAllowedError') {
+                    asrStatus.textContent = '麦克风权限被拒绝，请允许后重试';
+                } else {
+                    asrStatus.textContent = '录音失败，请检查麦克风权限';
+                }
+                resetRecordingState();
+                voiceBtn.disabled = false;
+            }
+        }
+
+        // 启动保活机制
+        function startKeepAlive() {
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+            }
+            
+            keepAliveInterval = setInterval(() => {
+                if (!isRecording) {
+                    console.log('录音已停止，停止保活');
+                    clearInterval(keepAliveInterval);
+                    return;
+                }
+                
+                if (!asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) {
+                    console.log('WebSocket未连接，尝试重连...');
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        connectASRWebSocket().catch(console.error);
+                    }
+                    return;
+                }
+                
+                try {
+                    // 发送更小的保活数据
+                    const smallKeepAlive = new Float32Array(320).fill(0); // 20ms的数据
+                    const pcmData = floatToPCM(smallKeepAlive);
+                    asrWebSocket.send(pcmData);
+                    console.log('发送保活音频数据');
+                } catch (error) {
+                    console.error('❌ 发送保活音频数据失败:', error);
+                    // 保活失败时立即重连
+                    if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        reconnectAttempts++;
+                        console.log(`保活失败，立即重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                        setTimeout(() => {
+                            if (isRecording) {
+                                connectASRWebSocket().catch(console.error);
+                            }
+                        }, 100); // 更快重连
+                    }
+                }
+            }, 8000); // 改为8秒一次保活，避免过于频繁
+        }
+
+        // 停止语音录制
+        function stopVoiceRecording() {
+            console.log('停止语音录制');
+            isRecording = false;
+            
+            // 发送结束标志 - 修正格式
+            if (asrWebSocket && asrWebSocket.readyState === WebSocket.OPEN) {
+                try {
+                    // 发送JSON格式的结束标志
+                    const endMessage = JSON.stringify({end: true});
+                    asrWebSocket.send(endMessage);
+                    console.log('发送ASR结束标志:', endMessage);
+                } catch (error) {
+                    console.error('发送结束标志失败:', error);
+                }
+                
+                // 主动关闭WebSocket连接
+                setTimeout(() => {
+                    if (asrWebSocket) {
+                        asrWebSocket.close(1000, '用户主动停止');
+                        asrWebSocket = null;
+                        console.log('主动关闭ASR WebSocket连接');
+                    }
+                }, 100);
+            }
+            
+            // 停止定时发送
+            if (sendInterval) {
+                clearInterval(sendInterval);
+                sendInterval = null;
+                console.log('停止音频发送定时器');
+            }
+            
+            // 停止保活机制
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+                keepAliveInterval = null;
+                console.log('停止保活机制');
+            }
+            
+            // 清理音频资源
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+                console.log('清理 音频处理器');
+            }
+            
+            if (source) {
+                source.disconnect();
+                source = null;
+                console.log('清理 音频源');
+            }
+            
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+                console.log('清理 关闭音频上下文');
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+                console.log('清理 停止音频流');
+            }
+            
+            // 重置缓冲区
+            audioBuffer = new Float32Array(0);
+            
+            // 更新UI状态
+            voiceBtn.className = 'voice-btn inactive';
+            voiceBtn.disabled = false; // 确保按钮可用
+            asrStatus.textContent = '语音识别已准备';
+            asrStatus.className = 'asr-status';
+            
+            // 重置重连计数
+            reconnectAttempts = 0;
+            console.log('语音录制完全停止');
+        }
+
+        // 开始定时发送音频数据
+        function startAudioSending() {
+            if (sendInterval) {
+                clearInterval(sendInterval);
+            }
+            
+            sendInterval = setInterval(() => {
+                if (!isRecording || !asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+                
+                if (audioBuffer.length >= SAMPLES_PER_CHUNK) {
+                    // 提取要发送的数据
+                    const chunkToSend = audioBuffer.slice(0, SAMPLES_PER_CHUNK);
+                    
+                    // 更新缓冲区，移除已发送的数据
+                    audioBuffer = audioBuffer.slice(SAMPLES_PER_CHUNK);
+                    
+                    // 转换为PCM并发送
+                    const pcmData = floatToPCM(chunkToSend);
+                    
+                    try {
+                        asrWebSocket.send(pcmData);
+                    } catch (error) {
+                        console.error('发送音频数据失败:', error);
+                        // 如果发送失败，尝试重连
+                        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            console.log(`发送失败，尝试重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().catch(console.error);
+                                }
+                            }, RECONNECT_DELAY);
+                        }
+                    }
+                }
+            }, SEND_INTERVAL);
+        }
+
+        // 将浮点音频数据转换为16位PCM
+        function floatToPCM(floatArray) {
+            const pcmArray = new Int16Array(floatArray.length);
+            for (let i = 0; i < floatArray.length; i++) {
+                // 将浮点数（-1到1）转换为16位整数（-32768到32767）
+                const sample = Math.max(-1, Math.min(1, floatArray[i]));
+                pcmArray[i] = sample * 32767;
+            }
+            return pcmArray.buffer;
+        }
+
+        // 连接ASR WebSocket
+        async function connectASRWebSocket() {
+            return new Promise((resolve, reject) => {
+                // 如果已有连接且状态正常，先关闭再重连
+                if (asrWebSocket) {
+                    if (asrWebSocket.readyState === WebSocket.OPEN) {
+                        console.log('✅ 关闭现有连接准备重连');
+                        asrWebSocket.close();
+                    }
+                    asrWebSocket = null;
+                }
+
+                const ts = Math.floor(Date.now() / 1000);
+                const signa = generateSigna(ASR_CONFIG.appid, ts, ASR_CONFIG.apiKey);
+                
+                const wsUrl = `${ASR_CONFIG.wsUrl}?appid=${ASR_CONFIG.appid}&ts=${ts}&signa=${encodeURIComponent(signa)}&lang=cn`;
+                
+                try {
+                    console.log('正在连接ASR WebSocket...');
+                    asrWebSocket = new WebSocket(wsUrl);
+                    
+                    asrWebSocket.onopen = () => {
+                        console.log('ASR WebSocket连接成功');
+                        reconnectAttempts = 0;
+                        asrStatus.textContent = '语音识别连接成功，开始说话...';
+                        resolve();
+                    };
+                    
+                    asrWebSocket.onmessage = (event) => {
+                        handleASRResult(event.data);
+                    };
+                    
+                    asrWebSocket.onerror = (error) => {
+                        console.error('❌ ASR WebSocket错误:', error);
+                        asrStatus.textContent = '语音识别连接失败，重试中...';
+                        
+                        // 自动重连而不是拒绝
+                        if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().then(resolve).catch(reject);
+                                }
+                            }, RECONNECT_DELAY);
+                        } else {
+                            reject(error);
+                        }
+                    };
+                    
+                    asrWebSocket.onclose = (event) => {
+                        console.log(`❌ ASR WebSocket连接关闭: code=${event.code}, reason=${event.reason}`);
+                        
+                        // 如果是正常关闭或用户主动停止，不需要重连
+                        if (event.code === 1000 || !isRecording) {
+                            console.log('正常关闭，不重连');
+                            return;
+                        }
+                        
+                        // 只在录音状态下才重连，且立即重连
+                        if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            console.log(`连接断开，立即重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                            asrStatus.textContent = '连接断开，重连中...';
+                            
+                            // 立即重连，不等待
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().catch(console.error);
+                                }
+                            }, 200); // 更快的重连
+                        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                            console.error('❌ 重连次数超过限制');
+                            asrStatus.textContent = '连接不稳定，请重新开始录音';
+                            // 不自动停止录音，让用户手动控制
+                        }
+                    };
+                } catch (error) {
+                    console.error('❌ 创建WebSocket失败:', error);
+                    reject(error);
+                }
+            });
+        }
+
+        // 处理ASR结果
+        function handleASRResult(data) {
+            try {
+                const result = JSON.parse(data);
+                
+                if (result.action === 'started') {
+                    console.log('ASR会话开始');
+                    asrStatus.textContent = '语音识别已开始，请说话...';
+                    return;
+                }
+                
+                if (result.action === 'result') {
+                    const resultData = JSON.parse(result.data);
+                    
+                    if (resultData.cn && resultData.cn.st && resultData.cn.st.rt) {
+                        const words = resultData.cn.st.rt[0].ws;
+                        let text = '';
+                        
+                        words.forEach(word => {
+                            if (word.cw) {
+                                word.cw.forEach(char => {
+                                    text += char.w;
+                                });
+                            }
+                        });
+                        
+                        // 处理文本累积
+                        if (text.trim()) {
+                            // 检查是否是句子结束的标志（句号、问号、感叹号等）
+                            const isEndOfSentence = /[。！？\.!?]$/.test(text.trim());
+                            
+                            if (isEndOfSentence) {
+                                // 句子结束，将当前句子添加到累积文本中
+                                if (currentSentence !== text.trim()) {
+                                    accumulatedText += (accumulatedText ? ' ' : '') + text.trim();
+                                    currentSentence = '';
+                                }
+                            } else {
+                                // 句子未结束，更新当前句子
+                                currentSentence = text.trim();
+                            }
+                            
+                            // 组合显示文本：累积文本 + 当前正在识别的句子
+                            const displayText = accumulatedText + 
+                                (accumulatedText && currentSentence ? ' ' : '') + 
+                                currentSentence;
+                            
+                            // 更新输入框和状态
+                            asrText = displayText; // 保存完整的累积文本
+                            messageInput.value = displayText; // 显示完整的累积文本  核心中的核心修改 若=asrText则只显示最新一句话
+                            asrStatus.textContent = `识别中: ${currentSentence || text.trim()}`;
+                            
+                            // 重置自动发送定时器
+                            clearTimeout(asrTimeout);
+                            asrTimeout = setTimeout(() => {
+                                if (asrText && isRecording) {
+                                    console.log('🚀 1秒无新内容，自动发送消息:', asrText);
+                                    
+                                    // 发送消息但不关闭录音连接
+                                    sendMessage();
+                                    
+                                    // 清空所有文本变量和输入框，但保持录音状态
+                                    asrText = '';
+                                    accumulatedText = '';
+                                    currentSentence = '';
+                                    messageInput.value = '';
+                                    asrStatus.textContent = '继续说话...';
+                                }
+                            }, DIALOG_TIMING_CONFIG.ASR_SILENCE_TIMEOUT); // 使用配置的延时参数 默认1s
+                        }
+                    }
+                }
+                
+                if (result.action === 'error') {
+                    console.error('❌ ASR错误:', result);
+                    let errorMsg = '语音识别错误';
+                    
+                    switch(result.code) {
+                        case '10700':
+                        case '37005':
+                            errorMsg = '检测到静默，重新连接中...';
+                            console.log('检测到静默错误，立即重连...');
+                            // 静默错误时立即重连，不断开录音
+                            if (isRecording) {
+                                asrStatus.textContent = '重新连接中...';
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 100);
+                            }
+                            return;
+                        case '10701':
+                            errorMsg = '音频格式错误';
+                            break;
+                        case '10702':
+                            errorMsg = '连接超时，重连中...';
+                            if (isRecording) {
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 500);
+                                return;
+                            }
+                            break;
+                        case '10800':
+                            errorMsg = '连接数超过限制，稍后重试...';
+                            if (isRecording) {
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 2000);
+                                return;
+                            }
+                            break;
+                        default:
+                            errorMsg = `识别错误: ${result.desc}`;
+                    }
+                    
+                    asrStatus.textContent = errorMsg;
+                }
+                
+            } catch (error) {
+                console.error('解析ASR结果失败:', error);
+                asrStatus.textContent = '解析识别结果失败';
+            }
+        }
+
+        // 重置录音状态
+        function resetRecordingState() {
+            stopVoiceRecording();
+            
+            clearTimeout(asrTimeout);
+            asrText = '';
+            accumulatedText = ''; // 清空累积文本
+            currentSentence = ''; // 清空当前句子
+            
+            // 延迟重置状态文本
+            setTimeout(() => {
+                if (!isRecording) {
+                    asrStatus.textContent = '语音识别已准备';
+                }
+            }, 1000);
+        }
+
+        // 页面关闭时清理资源
+        window.addEventListener('beforeunload', () => {
+            if (isRecording) {
+                stopVoiceRecording();
+            }
+            
+            if (asrWebSocket) {
+                asrWebSocket.close();
+            }
+        });
+
+        // 发送消息
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isTyping || !sessionId) return;
+
+            messageInput.value = '';
+            // 不清空asrText，让ASR继续工作
+            clearTimeout(asrTimeout); // 清除ASR超时定时器
+            addMessage(message, 'user');
+            
+            isTyping = true;
+            sendBtn.disabled = true;
+            cancelBtn.disabled = false;
+            clearAudioQueue();
+
+            const requestStartTime = performance.now();
+
+            try {
+                const response = await fetch('http://localhost:8000/chat/continue/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        message: message
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('网络请求失败');
+                }
+
+                const aiMessage = addMessage('', 'ai');
+                const prefixData = await handlePrefix('continue', message);
+                
+                // 只启动两个操作：
+                // 1. SSE流处理（包含前缀文本打字机效果）
+                // 2. 前缀音频播放
+                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
+                const audioPromise = playPrefixAudio(prefixData.audioFile);
+
+                await ssePromise;
+
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                addMessage('抱歉，先看看店内商品哦', 'ai');
+            } finally {
+                isTyping = false;
+                sendBtn.disabled = false;
+                cancelBtn.disabled = true;
+            }
+        }
+
+        // 修改现有的newChatBtn点击事件，添加ASR相关处理
+        newChatBtn.addEventListener('click', () => {
+            sessionId = null;
+            isTyping = false;
+            sendBtn.disabled = false;
+            cancelBtn.disabled = true;
+            chatMessages.innerHTML = '';
+            clearAudioQueue();
+            stopVoiceRecording(); // 停止ASR
+            modalOverlay.style.display = 'flex';
+            chatContainer.style.display = 'none';
+        });
+
+        // 初始化TTS音频上下文
         async function initAudioContext() {
             if (!audioContext) {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -422,6 +1139,33 @@
             }
         }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        
         // 前缀配置
         const prefixConfig = {
             new: {
@@ -480,7 +1224,7 @@
 - payment: 支付、付款、买单、结账
 - goodbye: 再见、拜拜、走了、谢谢再见
 - web_search: 查询、搜索、网上找、了解信息
-- human_transfer: 人工客服、转人工、找客服
+- human_transfer: 找老板、转人工、找客服
 - report: 汇报、统计、数据、情况
 
 只返回一个类型关键词，如果无法确定则返回：default`;
@@ -502,9 +1246,9 @@
             };
 
             try {
-                // 设置650ms超时
+                // 设置超时 默认650ms
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), 650)
+                    setTimeout(() => reject(new Error('Timeout')), DIALOG_TIMING_CONFIG.INTENT_ANALYSIS_TIMEOUT)
                 );
                 
                 const fetchPromise = fetch('https://api.siliconflow.cn/v1/chat/completions', options)
@@ -649,7 +1393,7 @@
             }
         }
 
-        // 播放下一个音频块
+        // TTS播放下一个音频块
         async function playNextAudioChunk() {
             // 如果正在播放前缀音频或流式音频，等待
             if (isPlayingPrefixAudio || isPlayingStreamAudio) {
@@ -690,7 +1434,7 @@
             }
         }
 
-        // 添加音频块到队列
+        // 添加音频块到TTS队列
         function addAudioChunkToQueue(audioChunk) {
             console.log('添加音频块到队列:', {
                 sentenceId: audioChunk.sentence_id,
@@ -708,7 +1452,7 @@
             }
         }
 
-        // 清空音频队列
+        // 清空TTS音频队列
         function clearAudioQueue() {
             audioQueue = [];
             if (currentAudioSource) {
@@ -726,15 +1470,6 @@
                 await new Promise(resolve => setTimeout(resolve, speed));
             }
         }
-
-        const modalOverlay = document.getElementById('modalOverlay');
-        const chatContainer = document.getElementById('chatContainer');
-        const chatForm = document.getElementById('chatForm');
-        const chatMessages = document.getElementById('chatMessages');
-        const messageInput = document.getElementById('messageInput');
-        const sendBtn = document.getElementById('sendBtn');
-        const newChatBtn = document.getElementById('newChatBtn');
-        const cancelBtn = document.getElementById('cancelBtn');
 
         // 提交表单，开始新对话
         chatForm.addEventListener('submit', async (e) => {
@@ -818,12 +1553,10 @@
                 const aiMessage = addMessage('', 'ai');
                 const prefixData = await handlePrefix('new');
                 
-                // 立即并行启动三个操作：
-                // 1. SSE流处理（立即开始，不等待前缀）
-                // 2. 前缀文本显示
-                // 3. 前缀音频播放
+                // 只启动两个操作：
+                // 1. SSE流处理（包含前缀文本打字机效果）
+                // 2. 前缀音频播放
                 const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
-                const typePromise = typeText(aiMessage.bubble, prefixData.text);
                 const audioPromise = playPrefixAudio(prefixData.audioFile);
                 
                 // 等待SSE流完成
@@ -832,61 +1565,6 @@
             } catch (error) {
                 console.error('开始新对话失败:', error);
                 throw error;
-            }
-        }
-
-        // 发送消息
-        async function sendMessage() {
-            const message = messageInput.value.trim();
-            if (!message || isTyping || !sessionId) return;
-
-            messageInput.value = '';
-            addMessage(message, 'user');
-            
-            isTyping = true;
-            sendBtn.disabled = true;
-            cancelBtn.disabled = false;
-            clearAudioQueue(); // 清空之前的音频队列
-
-            const requestStartTime = performance.now();
-
-            try {
-                const response = await fetch('http://localhost:8000/chat/continue/stream', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        session_id: sessionId,
-                        message: message
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('网络请求失败');
-                }
-
-                const aiMessage = addMessage('', 'ai');
-                const prefixData = await handlePrefix('continue', message);
-                
-                // 立即并行启动三个操作：
-                // 1. SSE流处理（立即开始，不等待前缀）
-                // 2. 前缀文本显示
-                // 3. 前缀音频播放
-                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
-                const typePromise = typeText(aiMessage.bubble, prefixData.text);
-                const audioPromise = playPrefixAudio(prefixData.audioFile);
-
-                // 等待SSE流完成
-                await ssePromise;
-
-            } catch (error) {
-                console.error('发送消息失败:', error);
-                addMessage('抱歉，先看看店内商品哦', 'ai');
-            } finally {
-                isTyping = false;
-                sendBtn.disabled = false;
-                cancelBtn.disabled = true;
             }
         }
 
@@ -962,12 +1640,13 @@
                 audioChunks: []
             };
             let prefixCompleted = false;
+            let prefixTypingCompleted = false;
 
             console.log('立即开始处理SSE流...');
 
             // 流队列消费函数
             const consumeStreamQueue = async () => {
-                if (!prefixCompleted) return;
+                if (!prefixCompleted || !prefixTypingCompleted) return;
                 
                 console.log('前缀完成，开始消费流队列');
                 
@@ -992,8 +1671,7 @@
             const checkPrefixAndConsume = async () => {
                 if (!prefixCompleted && !isPlayingPrefixAudio) {
                     prefixCompleted = true;
-                    console.log('前缀音频完成，立即消费流队列');
-                    await consumeStreamQueue();
+                    console.log('前缀音频完成，等待打字机效果完成');
                 }
             };
 
@@ -1001,6 +1679,11 @@
             const prefixChecker = setInterval(checkPrefixAndConsume, 10);
 
             try {
+                // 等待前缀文本打字机效果完成
+                await typeText(aiMessage.bubble, prefixData.text);
+                prefixTypingCompleted = true;
+                console.log('前缀文本打字机效果完成，开始处理流数据');
+
                 // 立即开始处理流数据，不等待任何前缀操作
                 while (true) {
                     const { done, value } = await reader.read();
@@ -1058,7 +1741,7 @@
                                     streamQueue.audioChunks.push(audioChunk);
                                     
                                     // 如果前缀已完成，立即消费
-                                    if (prefixCompleted) {
+                                    if (prefixCompleted && prefixTypingCompleted) {
                                         const cachedChunk = streamQueue.audioChunks.shift();
                                         addAudioChunkToQueue(cachedChunk);
                                     }
@@ -1072,7 +1755,7 @@
                                     accumulatedText += data.response;
                                     
                                     // 如果前缀已完成，立即消费
-                                    if (prefixCompleted) {
+                                    if (prefixCompleted && prefixTypingCompleted) {
                                         const cachedText = streamQueue.textChunks.shift();
                                         aiMessage.bubble.textContent += cachedText;
                                         void aiMessage.bubble.offsetHeight;
@@ -1091,6 +1774,7 @@
                 
                 // 最终确保消费完所有队列内容
                 prefixCompleted = true;
+                prefixTypingCompleted = true;
                 await consumeStreamQueue();
                 
                 if (lastStreamTime !== null && responseTimeDiv) {
@@ -1104,9 +1788,6 @@
                 console.log('SSE流处理完成，队列消费完毕');
             }
         }
-
-        // 页面加载时初始化音频上下文（可选，也可以在用户第一次交互时初始化）
-        document.addEventListener('click', initAudioContext, { once: true });
     </script>
 </body>
 </html>

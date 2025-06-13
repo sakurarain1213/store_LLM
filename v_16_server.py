@@ -1,7 +1,7 @@
 # 全局调试控制
 DEBUG_MODE = True
 # 全局混合流控制 开启则启用音频  否则仅文本
-USE_MIXED_STREAM = True  # 控制是否使用混合流输出  需要付钱
+USE_MIXED_STREAM = False  # 控制是否使用混合流输出  需要付钱
 
 '''
 TODO 虽然不影响结果 但是 修一下联网功能的异步报错 尽量不动本身 
