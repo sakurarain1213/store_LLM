@@ -203,14 +203,14 @@
         .message.user .message-bubble {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
-            border-bottom-right-radius: 4px;
+            border-top-right-radius: 4px;
         }
 
         .message.ai .message-bubble {
             background: white;
             color: #333;
             border: 1px solid #e1e5e9;
-            border-bottom-left-radius: 4px;
+            border-top-left-radius: 4px;
             box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
 
@@ -387,19 +387,19 @@
                 </div>
                 <div class="form-group">
                     <label>方言</label>
-                    <input type="text" id="dialect" value="上海" required>
+                    <input type="text" id="dialect" value="普通话" required>
                 </div>
                 <div class="form-group">
                     <label>性别</label>
-                    <input type="text" id="gender" value="男" required>
+                    <input type="text" id="gender" value="">
                 </div>
                 <div class="form-group">
                     <label>偏好 (逗号分隔)</label>
-                    <input type="text" id="preferences" value="可乐,香烟" required>
+                    <input type="text" id="preferences" value="可乐,香烟" >
                 </div>
                 <div class="form-group">
                     <label>用户名</label>
-                    <input type="text" id="username" value="张三" required>
+                    <input type="text" id="username" value="">
                 </div>
                 <div class="form-group">
                     <label>店铺ID</label>
@@ -419,11 +419,11 @@
                 </div>
                 <div class="form-group">
                     <label>备注</label>
-                    <input type="text" id="remark" value="购物袋免费;成条烟不拆开;店内不堂食;可以接热水;" required>
+                    <input type="text" id="remark" value="扫描门上二维码可以自助开门;不要的商品请放回,要退款找老板;购物袋免费;成条烟不拆开;" required>
                 </div>
                 <div class="form-group">
                     <label>促销活动 (逗号分隔)</label>
-                    <input type="text" id="promotions" value="满30减5,送口香糖" required>
+                    <input type="text" id="promotions" value="满30减5,送口香糖" >
                 </div>
                 <button type="submit" class="start-btn">开始对话</button>
             </form>
@@ -484,11 +484,11 @@
         const EMPTY_AUDIO_BUFFER = new Float32Array(SAMPLES_PER_CHUNK).fill(0); // 创建空音频缓冲区
 
         // 核心配置  直接影响对话延时
-        const DIALOG_TIMING_CONFIG = {
+        const TIMING_CONFIG = {
             // 语音识别无新内容自动发送延时
-            ASR_SILENCE_TIMEOUT: 1000,  // 核心参数：语音识别停止后等待时间
+            ASR_SILENCE_TIMEOUT: 700,  // 核心参数：600-800ms 语音识别停止后等待时间
             // 意图识别超时时间
-            INTENT_ANALYSIS_TIMEOUT: 650,  // 核心参数：意图分析API调用超时时间
+            INTENT_ANALYSIS_TIMEOUT: 550,  // 核心参数：意图分析API调用超时时间
             // 其他可添
         };
 
@@ -976,7 +976,7 @@
                                     messageInput.value = '';
                                     asrStatus.textContent = '继续说话...';
                                 }
-                            }, DIALOG_TIMING_CONFIG.ASR_SILENCE_TIMEOUT); // 使用配置的延时参数 默认1s
+                            }, TIMING_CONFIG.ASR_SILENCE_TIMEOUT); // 使用配置的延时参数 默认1s
                         }
                     }
                 }
@@ -1150,31 +1150,36 @@
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
         
         // 前缀配置
         const prefixConfig = {
-            new: {
-                text: "叮咚 ~ 您好，欢迎光临小店！",
-                audioFile: "welcome.mp3"
+            welcome: {
+                1: {
+                    text: "叮咚 ~ 您好，欢迎光临小店！",
+                    audioFile: "welcome_1.mp3"
+                },
+                2: {
+                    text: "欢迎来到本店，祝您购物愉快！",
+                    audioFile: "welcome_2.mp3"
+                },
+                3: {
+                    text: "您好，欢迎光临，店内商品多多哦！",
+                    audioFile: "welcome_3.mp3"
+                }
             },
             chitchat: {
-                text: "小助手很高兴和您聊天哦~",
-                audioFile: "chitchat.mp3"
+                1: {
+                    text: "小助手很高兴和您聊天哦~",
+                    audioFile: "chitchat_1.mp3"
+                },
+                2: {
+                    text: "聊聊天吧，您想问这个呀，让我想想。",
+                    audioFile: "chitchat_2.mp3"
+                },
+                3: {
+                    text: "和您说话真开心，其实我很擅长店内咨询哦。",
+                    audioFile: "chitchat_3.mp3"
+                }
             },
             shopping_guide: {
                 text: "让我为您介绍一下店内的商品吧~",
@@ -1205,8 +1210,30 @@
                 audioFile: "report.mp3"
             },
             default: {
-                text: "小助手不是很明白呢，我可以导购，推荐，或者随便聊聊天哦。",
-                audioFile: "default.mp3"
+                1: {
+                    text: "小助手不是很明白呢，我可以导购，推荐，或者随便聊聊天哦。",
+                    audioFile: "default_1.mp3"
+                },
+                2: {
+                    text: "抱歉，小助手没听清楚呢，您可以：描述商品，随便聊聊，或呼叫真人客服。",
+                    audioFile: "default_2.mp3"
+                },
+                3: {
+                    text: "已为您切换至舒缓模式，可以慢慢说哦~",
+                    audioFile: "default_3.mp3"
+                },
+                4: {
+                    text: "您的语速较快，正在加速响应哦，请描述需求~",
+                    audioFile: "default_4.mp3"
+                },
+                5: {
+                    text: "您可以告诉我需要什么，无人店小助手虽然不能吃零食，但超会找零食哦！",
+                    audioFile: "default_5.mp3"
+                },
+                6: {
+                    text: "这个问题我可能不清楚，可以帮您介绍下店内商品和服务哦。",
+                    audioFile: "default_6.mp3"
+                },
             }
         };
 
@@ -1215,7 +1242,7 @@
             const api_key = "sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit";
             
             const prompt = `你是无人实体零售店铺对话助手。分析用户输入意图，只返回对应类型关键词。
-用户输入："${userInput}"
+用户输入:"${userInput}"
 
 意图类型映射：
 - chitchat: 闲聊、聊天、问候、情感交流
@@ -1248,7 +1275,7 @@
             try {
                 // 设置超时 默认650ms
                 const timeoutPromise = new Promise((_, reject) => 
-                    setTimeout(() => reject(new Error('Timeout')), DIALOG_TIMING_CONFIG.INTENT_ANALYSIS_TIMEOUT)
+                    setTimeout(() => reject(new Error('Timeout')), TIMING_CONFIG.INTENT_ANALYSIS_TIMEOUT)
                 );
                 
                 const fetchPromise = fetch('https://api.siliconflow.cn/v1/chat/completions', options)
@@ -1298,16 +1325,25 @@
         // 统一前缀处理函数
         async function handlePrefix(type, userInput = null) {
             let prefixType = type;
-            
-            // 如果是continue类型，使用语义分析判断具体类型
+            // 如果是continue 前端语义分析
             if (type === 'continue' && userInput) {
                 prefixType = await analyzeUserIntent(userInput);
             }
-            
-            const config = prefixConfig[prefixType];
+            let configGroup = prefixConfig[prefixType] || prefixConfig['default'];
+
+            // 若有 text/audioFile 字段，直接返回
+            if (configGroup.text && configGroup.audioFile) {
+                return {
+                    text: configGroup.text,
+                    audioFile: configGroup.audioFile
+                };
+            }
+            // 否则是包含key的"随机组"，随机选key
+            const keys = Object.keys(configGroup);
+            const randomKey = keys[Math.floor(Math.random() * keys.length)];
             return {
-                text: config.text,
-                audioFile: config.audioFile
+                text: configGroup[randomKey].text,
+                audioFile: configGroup[randomKey].audioFile
             };
         }
 
@@ -1551,7 +1587,7 @@
                 }
 
                 const aiMessage = addMessage('', 'ai');
-                const prefixData = await handlePrefix('new');
+                const prefixData = await handlePrefix('welcome');
                 
                 // 只启动两个操作：
                 // 1. SSE流处理（包含前缀文本打字机效果）
@@ -1607,7 +1643,7 @@
             
             const avatar = document.createElement('div');
             avatar.className = 'avatar';
-            avatar.textContent = type === 'user' ? '你' : 'AI';
+            avatar.textContent = type === 'user' ? '我' : 'AI';
             
             const bubble = document.createElement('div');
             bubble.className = 'message-bubble';

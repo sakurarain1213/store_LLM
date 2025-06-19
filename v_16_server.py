@@ -63,10 +63,8 @@ Content-Type: application/json
 }
 出参（SSE格式混合流）
 同上
-
 1. 接口使用 Server-Sent Events (SSE) 格式返回响应
 2. 每个响应都以 "data: " 开头，以 "\n\n" 结尾
-
 
 '''
 
@@ -251,11 +249,11 @@ def intent_recognition(state: State):
     可选工具: 
     - handle_web_search: 查询实时联网信息
     - handle_chitchat: 日常对话/问候
-    - handle_shopping_guide: 商品位置/价格问题
+    - handle_shopping_guide: 商品位置/价格问题/有优惠吗
     - handle_recommendation: 明确要求推荐商品
-    - handle_human_transfer: 转人工请求
+    - handle_human_transfer: 有真人吗/投诉/有问题/转人工请求/怎么开门/怎么离店/怎么出门/门打不开
     - handle_report: 销售数据查询
-    - handle_payment: 支付相关
+    - handle_payment: 能否拿走/怎么付款/支付相关
     - handle_goodbye: 告别/退出/离开/结束请求
     只需返回工具名称，不要包含其他任何文字""")
 
@@ -573,8 +571,8 @@ async def handle_payment(state: State):
     新消息: {message}
     请用{dialect}方言回复，语气要专业友好。
     注意：
-    1. 说明支付方式
-    2. 说明支付流程
+    1. 说明支付方式：不支持现金，只支持二维码支付。
+    2. 说明支付流程：打开微信或支付宝付款码，对准收银台扫描枪，滴~ 完成支付。
     3. 说明支付注意事项
     4. 注意要符合{remark}内容，使用表情
     用户信息: {username},性别{gender}
@@ -682,7 +680,8 @@ async def handle_human_transfer(state: State):
     1. 说明已转接值班经理
     2. 说明工作时间（9:00-21:00）
     3. 说明预计等待时间
-    4. 注意要符合{remark}内容，使用表情
+    4. 说明联系方式：{contact}
+    5. 注意要符合{remark}内容，使用表情
     用户信息: {username},性别{gender}
     """)
 
@@ -692,7 +691,9 @@ async def handle_human_transfer(state: State):
         "dialect": state["current_user"]["dialect"],
         "remark": state["shop_info"]["remark"],
         "username": state["current_user"]["username"],
-        "gender": state["current_user"]["gender"]
+        "gender": state["current_user"]["gender"],
+        "contact": state["shop_info"].get("contact", "")
+        # get或者直接取写法都可以
     })
 
     # 创建原始文本流生成器
@@ -1141,18 +1142,14 @@ async def cleanup_session(request: dict):
         return {"error": str(e)}
 
 
-
-
-
 if __name__ == "__main__":
     import uvicorn
-    
     # Start the FastAPI application with uvicorn
     uvicorn.run(
         app,
-        host="0.0.0.0",  # Listen on all network interfaces
-        port=8000,       # Run on port 8000
-        log_level="info" # Set log level to info
+        host="0.0.0.0",  
+        port=8000,       
+        log_level="info" # Set log level
     )
 
 

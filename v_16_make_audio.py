@@ -46,43 +46,27 @@ async def generate_audio(text: str, output_file: str = "output.mp3"):
 async def main():
     # 定义所有需要生成的音频场景
     scenarios = {
-        "chitchat": {
-            "text": "小助手很高兴和您聊天哦~",
-            "audioFile": "chitchat.mp3"
-        },
-        "shopping_guide": {
-            "text": "让我为您介绍一下店内的商品吧~",
-            "audioFile": "shopping_guide.mp3"
-        },
-        "recommendation": {
-            "text": "让我为您推荐一些不错的商品~",
-            "audioFile": "recommendation.mp3"
-        },
-        "payment": {
-            "text": "好的，让我帮您处理支付问题~",
-            "audioFile": "payment.mp3"
-        },
-        "goodbye": {
-            "text": "小助手在这里感谢您的光临~",
-            "audioFile": "goodbye.mp3"
-        },
-        "web_search": {
-            "text": "让我在网络上查询一下相关信息~",
-            "audioFile": "web_search.mp3"
-        },
-        "human_transfer": {
-            "text": "我这就帮您转接人工客服~",
-            "audioFile": "human_transfer.mp3"
-        },
-        "report": {
-            "text": "好的，我来汇报一下店内的状况哦~",
-            "audioFile": "report.mp3"
-        },
-        "default": {
-            "text": "小助手不是很明白呢，我可以导购，推荐，或者随便聊聊天哦。",
-            "audioFile": "default.mp3"
-        }
+    "default_2": {
+        "text": "抱歉，小助手没听清楚呢，您可以：描述商品，随便聊聊，或呼叫真人客服。",
+        "audioFile": "default_2.mp3"
+    },
+    "default_3": {
+        "text": "已为您切换至舒缓模式，可以慢慢说哦~",
+        "audioFile": "default_3.mp3"
+    },
+    "default_4": {
+        "text": "您的语速较快，正在加速响应哦，请描述需求~",
+        "audioFile": "default_4.mp3"
+    },
+    "default_5": {
+        "text": "您可以告诉我需要什么，无人店小助手虽然不能吃零食，但超会找零食哦！",
+        "audioFile": "default_5.mp3"
+    },
+    "default_6": {
+        "text": "这个问题我可能不清楚，可以帮您介绍下店内商品和服务哦。",
+        "audioFile": "default_6.mp3"
     }
+}
     
     # 为每个场景生成音频文件
     for scenario_name, scenario_data in scenarios.items():
