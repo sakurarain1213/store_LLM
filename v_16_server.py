@@ -156,7 +156,7 @@ class ContinueChatRequest(BaseModel):
     session_id: str
     message: str
 
-# 混合流只改了这一个功能 10:42
+# 混合流只改了这一个功能
 async def personalized_welcome_stream(state: State):
     """Stream personalized welcome message with audio"""
     start_time = time.time()
@@ -167,7 +167,7 @@ async def personalized_welcome_stream(state: State):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     prompt = ChatPromptTemplate.from_template("""
-    用户姓名{username},性别{gender}.
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     系统时间为{now}.
     精选推荐: {recommends}
     今日活动: {promotions}
@@ -306,7 +306,7 @@ async def handle_chitchat(state: State):
     新消息: {message}
     请用{dialect}方言回复，语气要自然友好。
     注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -370,7 +370,7 @@ async def handle_shopping_guide(state: State):
             用{dialect}方言回答: 
             {response}
             注意要符合{remark}内容，使用表情
-            用户信息: {username},性别{gender}
+            用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
             历史对话: {history}
             """)
 
@@ -440,7 +440,7 @@ async def handle_shopping_guide(state: State):
     2. 如果询问位置，请说明具体位置
     3. 如果询问库存，请说明库存状态
     4. 注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -519,7 +519,7 @@ async def handle_recommendation(state: State):
     2. 说明推荐理由
     3. 可以推荐多个商品
     4. 注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -575,7 +575,7 @@ async def handle_payment(state: State):
     2. 说明支付流程：打开微信或支付宝付款码，对准收银台扫描枪，滴~ 完成支付。
     3. 说明支付注意事项
     4. 注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -628,7 +628,7 @@ async def handle_goodbye(state: State):
     2. 欢迎再次光临
     3. 可以适当使用表情符号
     4. 注意要符合{remark}内容
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -682,7 +682,7 @@ async def handle_human_transfer(state: State):
     3. 说明预计等待时间
     4. 说明联系方式：{contact}
     5. 注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -747,7 +747,7 @@ async def handle_report(state: State):
     2. 说明热销商品
     3. 提供可视化建议
     4. 注意要符合{remark}内容，使用表情
-    用户信息: {username},性别{gender}
+    用户姓名：{username},性别：{gender}，若用户姓名与性别为空则不要提及！
     """)
 
     response = (prompt | llm).stream({
@@ -832,7 +832,7 @@ async def handle_web_search(state: State):
         问题: {query}
         搜索结果: 
         {context}
-        切记用{dialect}方言回复，涵盖{username}和{gender}并
+        切记用{dialect}方言回复顾客，
         1. 去除语义无关和推广信息
         2. 合并重复内容
         3. 保留数字和关键点
@@ -1151,7 +1151,9 @@ if __name__ == "__main__":
         port=8000,       
         log_level="info" # Set log level
     )
-
+    # 尤其注意 uvicorn 的多进程/热重载机制导致win开发环节下默认启动时 有两个进程都在执行一遍全局代码。
+    # 一个主进程（监控文件变动，负责重启子进程） 一个子进程（真正跑 app）  利于快速开发
+    # 生产环境需要去掉最后的--reload来唯一启动  uvicorn v_16_server:app --host 0.0.0.0 --port 8000 --reload
 
 
 '''

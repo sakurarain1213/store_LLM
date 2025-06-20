@@ -21,7 +21,8 @@ ASR实时文本显示延迟<0.5s
 
 ## 技术栈
 
-- 框架: LangGraph
+- 后端服务框架: Uvicorn + FastAPI
+- 应用层框架: LangGraph
 - 大模型: Qwen2.5-7B-Instruct + DeepSeekV3
 - 数据存储: MongoDB
 - RAG检索增强: 
@@ -31,7 +32,7 @@ ASR实时文本显示延迟<0.5s
 - 语音能力:
   - ASR: 科大讯飞 (支持中英文)
   - TTS: 火山引擎 (多音色中英文)
-
+- 客户端(Web) : 传统三件套
 
 ## 功能模块
 

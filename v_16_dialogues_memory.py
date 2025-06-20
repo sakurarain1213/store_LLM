@@ -201,10 +201,13 @@ class DialogueManager:
             return False
 
 if __name__ == "__main__":
+    pass
     # 配置连接信息（示例）
-    CONN_STR = "mongodb://mongodb:DTNxf5TYcZWFKDYY@116.62.149.204:27017/"
-    mgr = DialogueManager(CONN_STR)
-    print(mgr.get_latest_messages("shop-123_user-123_20250519103421",3))
+    # CONN_STR = "mongodb://mongodb:DTNxf5TYcZWFKDYY@116.62.149.204:27017/"
+    # mgr = DialogueManager(CONN_STR)
+    # print(mgr.get_latest_messages("shop-123_user-123_20250519103421",3))
+
+
     # # 初始化管理器
     # try:
     #     mgr = DialogueManager(CONN_STR)

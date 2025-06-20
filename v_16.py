@@ -24,8 +24,8 @@ import graphviz  # 添加graphviz导入  仅用于调试绘图 可以删除
 from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_deepseek import ChatDeepSeek
-from v_14_web import fetch_search_results
-from v_14_dialogues_memory import DialogueManager
+from v_16_web import fetch_search_results
+from v_16_dialogues_memory import DialogueManager
 
 """
 v15 无新特性
