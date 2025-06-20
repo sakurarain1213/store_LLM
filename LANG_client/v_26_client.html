@@ -1,0 +1,1861 @@
+<!--目前 尝试优化打断 需要经过复杂的评审 压测 适配等 上线-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>无人店值守对话大模型DEMO0613版</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    <!--注意最好使用本地js脚本比较稳定 DEMO先不用script src="example/crypto-js.js"></script-->
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 弹窗样式 */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+            animation: modalSlideIn 0.3s ease-out;
+        }
+
+        @keyframes modalSlideIn {
+            from {
+                transform: translateY(-50px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .modal-title {
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+            font-size: 14px;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .start-btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+            margin-top: 10px;
+        }
+
+        .start-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        /* 聊天界面样式 */
+        .chat-container {
+            display: none;
+            height: 100vh;
+            flex-direction: column;
+            background: #f8f9fa;
+        }
+
+        .chat-header {
+            background: white;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e1e5e9;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .chat-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .header-buttons {
+            display: flex;
+            gap: 10px;
+        }
+
+        .new-chat-btn, .cancel-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .new-chat-btn:hover, .cancel-btn:hover:not(:disabled) {
+            background: #5a6fd8;
+        }
+
+        .cancel-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            animation: messageSlideIn 0.3s ease-out;
+        }
+
+        @keyframes messageSlideIn {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-bubble {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            font-size: 16px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-top-right-radius: 4px;
+        }
+
+        .message.ai .message-bubble {
+            background: white;
+            color: #333;
+            border: 1px solid #e1e5e9;
+            border-top-left-radius: 4px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .message.user .avatar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .message.ai .avatar {
+            background: #e1e5e9;
+            color: #666;
+        }
+
+        .chat-input {
+            background: white;
+            padding: 20px;
+            border-top: 1px solid #e1e5e9;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .chat-input input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e1e5e9;
+            border-radius: 25px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .chat-input input:focus {
+            border-color: #667eea;
+        }
+
+        .send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 45px;
+            height: 45px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: transform 0.2s;
+        }
+
+        .send-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .send-btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .typing-indicator {
+            display: flex;
+            gap: 4px;
+            padding: 8px 0;
+        }
+
+        .typing-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #999;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .typing-dot:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                transform: translateY(0);
+            }
+            30% {
+                transform: translateY(-10px);
+            }
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        /* 响应时间显示样式 */
+        .response-time {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+            text-align: right;
+            opacity: 0.7;
+        }
+
+        .message.ai .response-time {
+            text-align: left;
+        }
+
+        /* ASR相关样式 */
+        .voice-btn {
+            width: 50px;
+            height: 50px;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+        
+        .voice-btn.inactive {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .voice-btn.active {
+            background: #dc3545;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        .asr-status {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            text-align: center;
+        }
+        
+        .asr-status.active {
+            color: #dc3545;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+    <!-- 新建对话弹窗 -->
+    <div class="modal-overlay" id="modalOverlay">
+        <div class="modal">
+            <h2 class="modal-title">新建对话</h2> 
+            <form id="chatForm">
+                <div class="form-group">
+                    <label>用户ID</label>
+                    <input type="text" id="userId" value="user-123" required>
+                </div>
+                <div class="form-group">
+                    <label>方言</label>
+                    <input type="text" id="dialect" value="普通话" required>
+                </div>
+                <div class="form-group">
+                    <label>性别</label>
+                    <input type="text" id="gender" value="">
+                </div>
+                <div class="form-group">
+                    <label>偏好 (逗号分隔)</label>
+                    <input type="text" id="preferences" value="可乐,香烟" >
+                </div>
+                <div class="form-group">
+                    <label>用户名</label>
+                    <input type="text" id="username" value="">
+                </div>
+                <div class="form-group">
+                    <label>店铺ID</label>
+                    <input type="text" id="shopId" value="shop-123" required>
+                </div>
+                <div class="form-group">
+                    <label>店铺名称</label>
+                    <input type="text" id="shopName" value="西湖123便利店" required>
+                </div>
+                <div class="form-group">
+                    <label>地区</label>
+                    <input type="text" id="region" value="杭州" required>
+                </div>
+                <div class="form-group">
+                    <label>联系方式</label>
+                    <input type="text" id="contact" value="X老板, 123-1234-5678" required>
+                </div>
+                <div class="form-group">
+                    <label>备注</label>
+                    <input type="text" id="remark" value="扫描门上二维码可以自助开门;不要的商品请放回,要退款找老板;购物袋免费;成条烟不拆开;" required>
+                </div>
+                <div class="form-group">
+                    <label>促销活动 (逗号分隔)</label>
+                    <input type="text" id="promotions" value="满30减5,送口香糖" >
+                </div>
+                <button type="submit" class="start-btn">开始对话</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- 聊天界面 -->
+    <div class="chat-container" id="chatContainer">
+        <div class="chat-header">
+            <div class="chat-title">无人店值守对话大模型DEMO</div>
+            <div class="header-buttons">
+                <button class="cancel-btn" id="cancelBtn" disabled>打断</button>
+                <button class="new-chat-btn" id="newChatBtn">新建对话</button>
+            </div>
+        </div>
+        <div class="chat-messages" id="chatMessages"></div>
+        <div class="chat-input">
+            <button class="voice-btn inactive" id="voiceBtn">🎤</button>
+            <input type="text" id="messageInput" placeholder="输入消息或点击语音按钮..." maxlength="500">
+            <button class="send-btn" id="sendBtn">➤</button>
+        </div>
+        <div class="asr-status" id="asrStatus">语音识别已准备</div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let isTyping = false;
+        let audioQueue = []; // 用于缓存流式音频块
+        let isPlayingPrefixAudio = false; // 标记是否正在播放前缀音频
+        let isPlayingStreamAudio = false; // 标记是否正在播放流式音频
+        let audioContext = null; // Web Audio API上下文
+        let currentAudioSource = null; // 当前播放的音频源
+        let currentPrefixAudio = null; //新增全局变量 currentPrefixAudio  跟踪当前播放的前缀音频 用于智能打断
+
+        // ASR相关变量
+        let asrWebSocket = null;
+        let isRecording = false;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let asrText = '';
+        let accumulatedText = ''; // 累积的完整文本
+        let currentSentence = ''; // 当前正在识别的句子
+        let asrTimeout = null;
+        let processor = null;
+        let source = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 3;
+        const RECONNECT_DELAY = 1000; // 1秒
+        
+        // 音频缓冲区
+        let audioBuffer = new Float32Array(0);
+        let sendInterval = null;
+        const SEND_INTERVAL = 40; // 40ms发送一次
+        const SAMPLES_PER_CHUNK = Math.floor(16000 * SEND_INTERVAL / 1000); // 每40ms的采样点数
+        
+        // 保活机制
+        let keepAliveInterval = null;
+        const KEEP_ALIVE_INTERVAL = 10000; // 每10秒发送一次空音频  避免讯飞ASR服务的10700/37005 的15s静默错误
+        const EMPTY_AUDIO_BUFFER = new Float32Array(SAMPLES_PER_CHUNK).fill(0); // 创建空音频缓冲区
+
+        // 核心配置  直接影响对话延时
+        const TIMING_CONFIG = {
+            // 语音识别无新内容自动发送延时
+            ASR_SILENCE_TIMEOUT: 700,  // 核心参数：600-800ms 语音识别停止后等待时间
+            // 意图识别超时时间
+            INTENT_ANALYSIS_TIMEOUT: 550,  // 核心参数：意图分析API调用超时时间
+            // 其他可添
+        };
+
+        // 生成讯飞ASR签名
+        function generateSigna(appid, ts, apiKey) {
+            const baseString = appid + ts;
+            const md5 = CryptoJS.MD5(baseString).toString();
+            const sha1 = CryptoJS.HmacSHA1(md5, apiKey);
+            return CryptoJS.enc.Base64.stringify(sha1);
+        }
+        
+        // 讯飞ASR配置
+        const ASR_CONFIG = {
+            appid: 'c5f02e97', // 替换为你的appid
+            apiKey: 'fb6c5211f07dc8d9edc46177118b3658', // 替换为你的apiKey
+            wsUrl: 'wss://rtasr.xfyun.cn/v1/ws'
+        };
+        //https://console.xfyun.cn/services/rta     讯飞用量信息 免费5h 可每百元充值
+        //https://www.xfyun.cn/doc/asr/rtasr/API.html  讯飞流式ASR文档
+
+        // DOM元素
+        const modalOverlay = document.getElementById('modalOverlay');
+        const chatContainer = document.getElementById('chatContainer');
+        const chatForm = document.getElementById('chatForm');
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const newChatBtn = document.getElementById('newChatBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+        const voiceBtn = document.getElementById('voiceBtn');
+        const asrStatus = document.getElementById('asrStatus');
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', async () => {
+            // 预检查麦克风权限
+            try {
+                const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                if (permissionStatus.state === 'granted') {
+                    asrStatus.textContent = '语音识别已准备';
+                } else if (permissionStatus.state === 'denied') {
+                    asrStatus.textContent = '麦克风权限被拒绝，请在浏览器设置中允许';
+                } else {
+                    asrStatus.textContent = '语音识别已准备（首次使用需要授权）';
+                }
+            } catch (error) {
+                asrStatus.textContent = '语音识别已准备';
+            }
+            console.log('ASR系统已初始化');
+        });
+
+        // 语音按钮点击事件
+        voiceBtn.addEventListener('click', async (event) => {
+            // 阻止事件冒泡
+            event.preventDefault();
+            event.stopPropagation();
+            
+            console.log('语音按钮被点击，当前录音状态:', isRecording);
+            
+            if (isRecording) {
+                console.log('停止录音');
+                stopVoiceRecording();
+            } else {
+                console.log('开始录音');
+                // 在用户点击时才申请权限，并提供更好的用户体验
+                voiceBtn.disabled = true;
+                
+                try {
+                    await startVoiceRecording();
+                } catch (error) {
+                    console.error('启动录音失败:', error);
+                    asrStatus.textContent = '需要允许麦克风权限才能使用语音功能';
+                    voiceBtn.disabled = false;
+                }
+            }
+        });
+
+        // 开始语音录制
+        async function startVoiceRecording() {
+            try {
+                // 🎯 核心中的核心 关键修改：一开始录音就立即打断所有AI音频
+                clearAudioQueue();
+                // 先检查是否已有权限
+                let hasPermission = false;
+                try {
+                    const permissionStatus = await navigator.permissions.query({name: 'microphone'});
+                    hasPermission = permissionStatus.state === 'granted';
+                } catch (e) {
+                    // 如果不支持permissions API，继续尝试获取媒体流
+                }
+
+                // 如果没有权限或不确定，显示请求权限的提示
+                if (!hasPermission) {
+                    asrStatus.textContent = '正在申请麦克风权限...';
+                }
+
+                // 获取音频流（只会在第一次时弹出权限请求）
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+
+                // 创建音频上下文
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                // 创建音频源
+                source = audioContext.createMediaStreamSource(audioStream);
+                
+                // 使用createScriptProcessor，但优化处理方式
+                processor = audioContext.createScriptProcessor(2048, 1, 1);
+                
+                // 音频处理
+                processor.onaudioprocess = (e) => {
+                    if (!isRecording) return;
+                    
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    
+                    // 将新数据添加到缓冲区
+                    const newBuffer = new Float32Array(audioBuffer.length + inputData.length);
+                    newBuffer.set(audioBuffer);
+                    newBuffer.set(inputData, audioBuffer.length);
+                    audioBuffer = newBuffer;
+                };
+
+                // 连接音频节点
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                isRecording = true;
+                voiceBtn.className = 'voice-btn active';
+                voiceBtn.disabled = false; // 确保按钮可用
+                asrStatus.textContent = '正在录音...';
+                asrStatus.className = 'asr-status active';
+                
+                // 连接ASR WebSocket
+                await connectASRWebSocket();
+                
+                // 开始定时发送音频数据
+                startAudioSending();
+                
+                // 启动保活机制
+                startKeepAlive();
+                
+            } catch (error) {
+                console.error('启动录音失败:', error);
+                if (error.name === 'NotAllowedError') {
+                    asrStatus.textContent = '麦克风权限被拒绝，请允许后重试';
+                } else {
+                    asrStatus.textContent = '录音失败，请检查麦克风权限';
+                }
+                resetRecordingState();
+                voiceBtn.disabled = false;
+            }
+        }
+
+        // 启动保活机制
+        function startKeepAlive() {
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+            }
+            
+            keepAliveInterval = setInterval(() => {
+                if (!isRecording) {
+                    console.log('录音已停止，停止保活');
+                    clearInterval(keepAliveInterval);
+                    return;
+                }
+                
+                if (!asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) {
+                    console.log('WebSocket未连接，尝试重连...');
+                    if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        connectASRWebSocket().catch(console.error);
+                    }
+                    return;
+                }
+                
+                try {
+                    // 发送更小的保活数据
+                    const smallKeepAlive = new Float32Array(320).fill(0); // 20ms的数据
+                    const pcmData = floatToPCM(smallKeepAlive);
+                    asrWebSocket.send(pcmData);
+                    console.log('发送保活音频数据');
+                } catch (error) {
+                    console.error('❌ 发送保活音频数据失败:', error);
+                    // 保活失败时立即重连
+                    if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                        reconnectAttempts++;
+                        console.log(`保活失败，立即重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                        setTimeout(() => {
+                            if (isRecording) {
+                                connectASRWebSocket().catch(console.error);
+                            }
+                        }, 100); // 更快重连
+                    }
+                }
+            }, 8000); // 改为8秒一次保活，避免过于频繁
+        }
+
+        // 停止语音录制
+        function stopVoiceRecording() {
+            console.log('停止语音录制');
+            isRecording = false;
+            
+            // 发送结束标志 - 修正格式
+            if (asrWebSocket && asrWebSocket.readyState === WebSocket.OPEN) {
+                try {
+                    // 发送JSON格式的结束标志
+                    const endMessage = JSON.stringify({end: true});
+                    asrWebSocket.send(endMessage);
+                    console.log('发送ASR结束标志:', endMessage);
+                } catch (error) {
+                    console.error('发送结束标志失败:', error);
+                }
+                
+                // 主动关闭WebSocket连接
+                setTimeout(() => {
+                    if (asrWebSocket) {
+                        asrWebSocket.close(1000, '用户主动停止');
+                        asrWebSocket = null;
+                        console.log('主动关闭ASR WebSocket连接');
+                    }
+                }, 100);
+            }
+            
+            // 停止定时发送
+            if (sendInterval) {
+                clearInterval(sendInterval);
+                sendInterval = null;
+                console.log('停止音频发送定时器');
+            }
+            
+            // 停止保活机制
+            if (keepAliveInterval) {
+                clearInterval(keepAliveInterval);
+                keepAliveInterval = null;
+                console.log('停止保活机制');
+            }
+            
+            // 清理音频资源
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+                console.log('清理 音频处理器');
+            }
+            
+            if (source) {
+                source.disconnect();
+                source = null;
+                console.log('清理 音频源');
+            }
+            
+            if (audioContext && audioContext.state !== 'closed') {
+                audioContext.close();
+                audioContext = null;
+                console.log('清理 关闭音频上下文');
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+                console.log('清理 停止音频流');
+            }
+            
+            // 重置缓冲区
+            audioBuffer = new Float32Array(0);
+            
+            // 更新UI状态
+            voiceBtn.className = 'voice-btn inactive';
+            voiceBtn.disabled = false; // 确保按钮可用
+            asrStatus.textContent = '语音识别已准备';
+            asrStatus.className = 'asr-status';
+            
+            // 重置重连计数
+            reconnectAttempts = 0;
+            console.log('语音录制完全停止');
+        }
+
+        // 开始定时发送音频数据
+        function startAudioSending() {
+            if (sendInterval) {
+                clearInterval(sendInterval);
+            }
+            
+            sendInterval = setInterval(() => {
+                if (!isRecording || !asrWebSocket || asrWebSocket.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+                
+                if (audioBuffer.length >= SAMPLES_PER_CHUNK) {
+                    // 提取要发送的数据
+                    const chunkToSend = audioBuffer.slice(0, SAMPLES_PER_CHUNK);
+                    
+                    // 更新缓冲区，移除已发送的数据
+                    audioBuffer = audioBuffer.slice(SAMPLES_PER_CHUNK);
+                    
+                    // 转换为PCM并发送
+                    const pcmData = floatToPCM(chunkToSend);
+                    
+                    try {
+                        asrWebSocket.send(pcmData);
+                    } catch (error) {
+                        console.error('发送音频数据失败:', error);
+                        // 如果发送失败，尝试重连
+                        if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            console.log(`发送失败，尝试重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().catch(console.error);
+                                }
+                            }, RECONNECT_DELAY);
+                        }
+                    }
+                }
+            }, SEND_INTERVAL);
+        }
+
+        // 将浮点音频数据转换为16位PCM
+        function floatToPCM(floatArray) {
+            const pcmArray = new Int16Array(floatArray.length);
+            for (let i = 0; i < floatArray.length; i++) {
+                // 将浮点数（-1到1）转换为16位整数（-32768到32767）
+                const sample = Math.max(-1, Math.min(1, floatArray[i]));
+                pcmArray[i] = sample * 32767;
+            }
+            return pcmArray.buffer;
+        }
+
+        // 连接ASR WebSocket
+        async function connectASRWebSocket() {
+            return new Promise((resolve, reject) => {
+                // 如果已有连接且状态正常，先关闭再重连
+                if (asrWebSocket) {
+                    if (asrWebSocket.readyState === WebSocket.OPEN) {
+                        console.log('✅ 关闭现有连接准备重连');
+                        asrWebSocket.close();
+                    }
+                    asrWebSocket = null;
+                }
+
+                const ts = Math.floor(Date.now() / 1000);
+                const signa = generateSigna(ASR_CONFIG.appid, ts, ASR_CONFIG.apiKey);
+                
+                const wsUrl = `${ASR_CONFIG.wsUrl}?appid=${ASR_CONFIG.appid}&ts=${ts}&signa=${encodeURIComponent(signa)}&lang=cn`;
+                
+                try {
+                    console.log('正在连接ASR WebSocket...');
+                    asrWebSocket = new WebSocket(wsUrl);
+                    
+                    asrWebSocket.onopen = () => {
+                        console.log('ASR WebSocket连接成功');
+                        reconnectAttempts = 0;
+                        asrStatus.textContent = '语音识别连接成功，开始说话...';
+                        resolve();
+                    };
+                    
+                    asrWebSocket.onmessage = (event) => {
+                        handleASRResult(event.data);
+                    };
+                    
+                    asrWebSocket.onerror = (error) => {
+                        console.error('❌ ASR WebSocket错误:', error);
+                        asrStatus.textContent = '语音识别连接失败，重试中...';
+                        
+                        // 自动重连而不是拒绝
+                        if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().then(resolve).catch(reject);
+                                }
+                            }, RECONNECT_DELAY);
+                        } else {
+                            reject(error);
+                        }
+                    };
+                    
+                    asrWebSocket.onclose = (event) => {
+                        console.log(`❌ ASR WebSocket连接关闭: code=${event.code}, reason=${event.reason}`);
+                        
+                        // 如果是正常关闭或用户主动停止，不需要重连
+                        if (event.code === 1000 || !isRecording) {
+                            console.log('正常关闭，不重连');
+                            return;
+                        }
+                        
+                        // 只在录音状态下才重连，且立即重连
+                        if (isRecording && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                            reconnectAttempts++;
+                            console.log(`连接断开，立即重连 (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                            asrStatus.textContent = '连接断开，重连中...';
+                            
+                            // 立即重连，不等待
+                            setTimeout(() => {
+                                if (isRecording) {
+                                    connectASRWebSocket().catch(console.error);
+                                }
+                            }, 200); // 更快的重连
+                        } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                            console.error('❌ 重连次数超过限制');
+                            asrStatus.textContent = '连接不稳定，请重新开始录音';
+                            // 不自动停止录音，让用户手动控制
+                        }
+                    };
+                } catch (error) {
+                    console.error('❌ 创建WebSocket失败:', error);
+                    reject(error);
+                }
+            });
+        }
+
+        // 处理ASR结果
+        function handleASRResult(data) {
+            try {
+                const result = JSON.parse(data);
+                
+                if (result.action === 'started') {
+                    console.log('ASR会话开始');
+                    asrStatus.textContent = '语音识别已开始，请说话...';
+                    return;
+                }
+                
+                if (result.action === 'result') {
+                    const resultData = JSON.parse(result.data);
+                    
+                    if (resultData.cn && resultData.cn.st && resultData.cn.st.rt) {
+                        const words = resultData.cn.st.rt[0].ws;
+                        let text = '';
+                        
+                        words.forEach(word => {
+                            if (word.cw) {
+                                word.cw.forEach(char => {
+                                    text += char.w;
+                                });
+                            }
+                        });
+                        
+                        // 处理文本累积
+                        if (text.trim()) {
+                            // 检查是否是句子结束的标志（句号、问号、感叹号等）
+                            const isEndOfSentence = /[。！？\.!?]$/.test(text.trim());
+                            
+                            if (isEndOfSentence) {
+                                // 句子结束，将当前句子添加到累积文本中
+                                if (currentSentence !== text.trim()) {
+                                    accumulatedText += (accumulatedText ? ' ' : '') + text.trim();
+                                    currentSentence = '';
+                                }
+                            } else {
+                                // 句子未结束，更新当前句子
+                                currentSentence = text.trim();
+                            }
+                            
+                            // 组合显示文本：累积文本 + 当前正在识别的句子
+                            const displayText = accumulatedText + 
+                                (accumulatedText && currentSentence ? ' ' : '') + 
+                                currentSentence;
+                            
+                            // 更新输入框和状态
+                            asrText = displayText; // 保存完整的累积文本
+                            messageInput.value = displayText; // 显示完整的累积文本  核心中的核心修改 若=asrText则只显示最新一句话
+                            asrStatus.textContent = `识别中: ${currentSentence || text.trim()}`;
+                            
+                            // 重置自动发送定时器
+                            clearTimeout(asrTimeout);
+                            asrTimeout = setTimeout(() => {
+                                if (asrText && isRecording) {
+                                    console.log('🚀 1秒无新内容，自动发送消息:', asrText);
+                                    
+                                    // 发送消息但不关闭录音连接
+                                    sendMessage();
+                                    
+                                    // 清空所有文本变量和输入框，但保持录音状态
+                                    asrText = '';
+                                    accumulatedText = '';
+                                    currentSentence = '';
+                                    messageInput.value = '';
+                                    asrStatus.textContent = '继续说话...';
+                                }
+                            }, TIMING_CONFIG.ASR_SILENCE_TIMEOUT); // 使用配置的延时参数 默认1s
+                        }
+                    }
+                }
+                
+                if (result.action === 'error') {
+                    console.error('❌ ASR错误:', result);
+                    let errorMsg = '语音识别错误';
+                    
+                    switch(result.code) {
+                        case '10700':
+                        case '37005':
+                            errorMsg = '检测到静默，重新连接中...';
+                            console.log('检测到静默错误，立即重连...');
+                            // 静默错误时立即重连，不断开录音
+                            if (isRecording) {
+                                asrStatus.textContent = '重新连接中...';
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 100);
+                            }
+                            return;
+                        case '10701':
+                            errorMsg = '音频格式错误';
+                            break;
+                        case '10702':
+                            errorMsg = '连接超时，重连中...';
+                            if (isRecording) {
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 500);
+                                return;
+                            }
+                            break;
+                        case '10800':
+                            errorMsg = '连接数超过限制，稍后重试...';
+                            if (isRecording) {
+                                setTimeout(() => {
+                                    connectASRWebSocket().catch(console.error);
+                                }, 2000);
+                                return;
+                            }
+                            break;
+                        default:
+                            errorMsg = `识别错误: ${result.desc}`;
+                    }
+                    
+                    asrStatus.textContent = errorMsg;
+                }
+                
+            } catch (error) {
+                console.error('解析ASR结果失败:', error);
+                asrStatus.textContent = '解析识别结果失败';
+            }
+        }
+
+        // 重置录音状态
+        function resetRecordingState() {
+            stopVoiceRecording();
+            
+            clearTimeout(asrTimeout);
+            asrText = '';
+            accumulatedText = ''; // 清空累积文本
+            currentSentence = ''; // 清空当前句子
+            
+            // 延迟重置状态文本
+            setTimeout(() => {
+                if (!isRecording) {
+                    asrStatus.textContent = '语音识别已准备';
+                }
+            }, 1000);
+        }
+
+        // 页面关闭时清理资源
+        window.addEventListener('beforeunload', () => {
+            if (isRecording) {
+                stopVoiceRecording();
+            }
+            
+            if (asrWebSocket) {
+                asrWebSocket.close();
+            }
+        });
+
+        // 发送消息
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isTyping || !sessionId) return;
+
+            messageInput.value = '';
+            // 不清空asrText，让ASR继续工作
+            clearTimeout(asrTimeout); // 清除ASR超时定时器
+            addMessage(message, 'user');
+            
+            isTyping = true;
+            sendBtn.disabled = true;
+            cancelBtn.disabled = false;
+            clearAudioQueue();
+
+            const requestStartTime = performance.now();
+
+            try {
+                const response = await fetch('http://localhost:8000/chat/continue/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        message: message
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('网络请求失败');
+                }
+
+                const aiMessage = addMessage('', 'ai');
+                const prefixData = await handlePrefix('continue', message);
+                
+                // 只启动两个操作：
+                // 1. SSE流处理（包含前缀文本打字机效果）
+                // 2. 前缀音频播放
+                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
+                const audioPromise = playPrefixAudio(prefixData.audioFile);
+
+                await ssePromise;
+
+            } catch (error) {
+                console.error('发送消息失败:', error);
+                addMessage('抱歉，先看看店内商品哦', 'ai');
+            } finally {
+                isTyping = false;
+                sendBtn.disabled = false;
+                cancelBtn.disabled = true;
+            }
+        }
+
+        // 修改现有的newChatBtn点击事件，添加ASR相关处理
+        newChatBtn.addEventListener('click', () => {
+            sessionId = null;
+            isTyping = false;
+            sendBtn.disabled = false;
+            cancelBtn.disabled = true;
+            chatMessages.innerHTML = '';
+            clearAudioQueue();
+            stopVoiceRecording(); // 停止ASR
+            modalOverlay.style.display = 'flex';
+            chatContainer.style.display = 'none';
+        });
+
+        // 初始化TTS音频上下文
+        async function initAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // 如果音频上下文被暂停，恢复它
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+            }
+        }
+
+
+
+
+
+
+
+
+
+
+
+
+        
+        // 前缀配置
+        const prefixConfig = {
+            welcome: {
+                1: {
+                    text: "叮咚 ~ 您好，欢迎光临小店！",
+                    audioFile: "welcome_1.mp3"
+                },
+                2: {
+                    text: "欢迎来到本店，祝您购物愉快！",
+                    audioFile: "welcome_2.mp3"
+                },
+                3: {
+                    text: "您好，欢迎光临，店内商品多多哦！",
+                    audioFile: "welcome_3.mp3"
+                }
+            },
+            chitchat: {
+                1: {
+                    text: "小助手很高兴和您聊天哦~",
+                    audioFile: "chitchat_1.mp3"
+                },
+                2: {
+                    text: "聊聊天吧，您想问这个呀，让我想想。",
+                    audioFile: "chitchat_2.mp3"
+                },
+                3: {
+                    text: "和您说话真开心，其实我很擅长店内咨询哦。",
+                    audioFile: "chitchat_3.mp3"
+                }
+            },
+            shopping_guide: {
+                text: "让我为您介绍一下店内的商品吧~",
+                audioFile: "shopping_guide.mp3"
+            },
+            recommendation: {
+                text: "让我为您推荐一些不错的商品~",
+                audioFile: "recommendation.mp3"
+            },
+            payment: {
+                text: "好的，让我帮您处理支付问题~",
+                audioFile: "payment.mp3"
+            },
+            goodbye: {
+                text: "小助手在这里感谢您的光临~",
+                audioFile: "goodbye.mp3"
+            },
+            web_search: {
+                text: "让我在网络上查询一下相关信息~",
+                audioFile: "web_search.mp3"
+            },
+            human_transfer: {
+                text: "我这就帮您转接人工客服~",
+                audioFile: "human_transfer.mp3"
+            },
+            report: {
+                text: "好的，我来汇报一下店内的状况哦~",
+                audioFile: "report.mp3"
+            },
+            default: {
+                1: {
+                    text: "小助手不是很明白呢，我可以导购，推荐，或者随便聊聊天哦。",
+                    audioFile: "default_1.mp3"
+                },
+                2: {
+                    text: "抱歉，小助手没听清楚呢，您可以：描述商品，随便聊聊，或呼叫真人客服。",
+                    audioFile: "default_2.mp3"
+                },
+                3: {
+                    text: "已为您切换至舒缓模式，可以慢慢说哦~",
+                    audioFile: "default_3.mp3"
+                },
+                4: {
+                    text: "您的语速较快，正在加速响应哦，请描述需求~",
+                    audioFile: "default_4.mp3"
+                },
+                5: {
+                    text: "您可以告诉我需要什么，无人店小助手虽然不能吃零食，但超会找零食哦！",
+                    audioFile: "default_5.mp3"
+                },
+                6: {
+                    text: "这个问题我可能不清楚，可以帮您介绍下店内商品和服务哦。",
+                    audioFile: "default_6.mp3"
+                },
+            }
+        };
+
+        // 语义分析函数  目前依然使用LLM 无本地语义模型
+        async function analyzeUserIntent(userInput) {
+            const api_key = "sk-tdvgqeujlplwxkczbzoyicgadzzdkdgulgdxzzbkcaybyhit";
+            
+            const prompt = `你是无人实体零售店铺对话助手。分析用户输入意图，只返回对应类型关键词。
+用户输入:"${userInput}"
+
+意图类型映射：
+- chitchat: 闲聊、聊天、问候、情感交流
+- shopping_guide: 导购、介绍商品、了解产品、商品详情、价格咨询
+- recommendation: 推荐、建议、什么好、帮我选
+- payment: 支付、付款、买单、结账
+- goodbye: 再见、拜拜、走了、谢谢再见
+- web_search: 查询、搜索、网上找、了解信息
+- human_transfer: 找老板、转人工、找客服
+- report: 汇报、统计、数据、情况
+
+只返回一个类型关键词，如果无法确定则返回：default`;
+
+            const options = {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${api_key}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    "model": "THUDM/glm-4-9b-chat",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": false,
+                    "max_tokens": 10,
+                    "temperature": 0.1,
+                    "top_p": 0.8
+                })
+            };
+
+            try {
+                // 设置超时 默认650ms
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('Timeout')), TIMING_CONFIG.INTENT_ANALYSIS_TIMEOUT)
+                );
+                
+                const fetchPromise = fetch('https://api.siliconflow.cn/v1/chat/completions', options)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        }
+                        return response.json();
+                    });
+
+                const response = await Promise.race([fetchPromise, timeoutPromise]);
+                
+                if (response.choices && response.choices[0] && response.choices[0].message) {
+                    const content = response.choices[0].message.content.trim().toLowerCase();
+                    
+                    // 过滤和验证返回的类型
+                    const validTypes = [
+                        'chitchat', 'shopping_guide', 'recommendation', 
+                        'payment', 'goodbye', 'web_search', 
+                        'human_transfer', 'report'
+                    ];
+                    
+                    // 检查返回的内容是否为有效类型
+                    for (const type of validTypes) {
+                        if (content.includes(type)) {
+                            return type;
+                        }
+                    }
+                    
+                    // 如果没有匹配的有效类型，返回default
+                    return 'default';
+                } else {
+                    console.error('API返回格式异常:', response);
+                    return 'default';
+                }
+                
+            } catch (error) {
+                if (error.message === 'Timeout') {
+                    console.warn('语义分析超时，使用默认类型');
+                } else {
+                    console.error('语义分析API调用失败:', error);
+                }
+                return 'default';
+            }
+        }
+
+        // 统一前缀处理函数
+        async function handlePrefix(type, userInput = null) {
+            let prefixType = type;
+            // 如果是continue 前端语义分析
+            if (type === 'continue' && userInput) {
+                prefixType = await analyzeUserIntent(userInput);
+            }
+            let configGroup = prefixConfig[prefixType] || prefixConfig['default'];
+
+            // 若有 text/audioFile 字段，直接返回
+            if (configGroup.text && configGroup.audioFile) {
+                return {
+                    text: configGroup.text,
+                    audioFile: configGroup.audioFile
+                };
+            }
+            // 否则是包含key的"随机组"，随机选key
+            const keys = Object.keys(configGroup);
+            const randomKey = keys[Math.floor(Math.random() * keys.length)];
+            return {
+                text: configGroup[randomKey].text,
+                audioFile: configGroup[randomKey].audioFile
+            };
+        }
+
+        // 播放前缀音频函数
+        async function playPrefixAudio(audioFile) {
+            try {
+                isPlayingPrefixAudio = true;
+                currentPrefixAudio = new Audio(`audio_file/${audioFile}`);
+                
+                await new Promise((resolve, reject) => {
+                    currentPrefixAudio.onended = () => {
+                        console.log('前缀音频播放完成');
+                        isPlayingPrefixAudio = false;
+                        currentPrefixAudio = null;
+                        // 前缀音频播放完成后，开始播放排队的音频流
+                        playNextAudioChunk();
+                        resolve();
+                    };
+                    
+                    currentPrefixAudio.onerror = (error) => {
+                        console.error('前缀音频播放错误:', error);
+                        isPlayingPrefixAudio = false;
+                        currentPrefixAudio = null;
+                        reject(error);
+                    };
+                    
+                    // 监听暂停事件（用于检测被打断）
+                    currentPrefixAudio.onpause = () => {
+                        if (isPlayingPrefixAudio) {
+                            console.log('前缀音频停止');
+                            isPlayingPrefixAudio = false;
+                            currentPrefixAudio = null;
+                        }
+                    };
+                    
+                    currentPrefixAudio.play();
+                });
+            } catch (error) {
+                console.warn('前缀音频播放失败:', error);
+                isPlayingPrefixAudio = false;
+                currentPrefixAudio = null;
+                // 即使前缀音频播放失败，也要开始播放音频流
+                playNextAudioChunk();
+            }
+        }
+
+        // 将base64音频数据转换为AudioBuffer
+        async function base64ToAudioBuffer(base64Data) {
+            try {
+                await initAudioContext();
+                
+                // 解码base64数据
+                const binaryString = atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                // 解码音频数据
+                const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
+                return audioBuffer;
+            } catch (error) {
+                console.error('音频数据转换失败:', error);
+                throw error;
+            }
+        }
+
+        // 播放音频buffer
+        async function playAudioBuffer(audioBuffer) {
+            try {
+                await initAudioContext();
+                
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                currentAudioSource = source;
+                
+                return new Promise((resolve, reject) => {
+                    source.onended = () => {
+                        console.log('音频块播放完成');
+                        currentAudioSource = null;
+                        resolve();
+                    };
+                    
+                    source.onerror = (error) => {
+                        console.error('音频播放错误:', error);
+                        currentAudioSource = null;
+                        reject(error);
+                    };
+                    
+                    source.start();
+                });
+            } catch (error) {
+                console.error('播放音频buffer失败:', error);
+                throw error;
+            }
+        }
+
+        // TTS播放下一个音频块
+        async function playNextAudioChunk() {
+            // 如果正在播放前缀音频或流式音频，等待
+            if (isPlayingPrefixAudio || isPlayingStreamAudio) {
+                return;
+            }
+            
+            // 如果队列为空，返回
+            if (audioQueue.length === 0) {
+                return;
+            }
+            
+            // 取出队列中的第一个音频块
+            const audioChunk = audioQueue.shift();
+            
+            try {
+                isPlayingStreamAudio = true;
+                console.log('开始播放音频块:', {
+                    sentenceId: audioChunk.sentence_id,
+                    chunkId: audioChunk.chunk_id,
+                    text: audioChunk.text,
+                    isFinal: audioChunk.is_final
+                });
+                
+                const audioBuffer = await base64ToAudioBuffer(audioChunk.data);
+                await playAudioBuffer(audioBuffer);
+                
+                console.log('音频块播放完成:', {
+                    sentenceId: audioChunk.sentence_id,
+                    chunkId: audioChunk.chunk_id
+                });
+                
+            } catch (error) {
+                console.error('播放音频块失败:', error);
+            } finally {
+                isPlayingStreamAudio = false;
+                // 递归播放下一个音频块
+                setTimeout(() => playNextAudioChunk(), 10);
+            }
+        }
+
+        // 添加音频块到TTS队列
+        function addAudioChunkToQueue(audioChunk) {
+            console.log('添加音频块到队列:', {
+                sentenceId: audioChunk.sentence_id,
+                chunkId: audioChunk.chunk_id,
+                text: audioChunk.text,
+                dataLength: audioChunk.data ? audioChunk.data.length : 0,
+                isFinal: audioChunk.is_final
+            });
+            
+            audioQueue.push(audioChunk);
+            
+            // 如果当前没有播放前缀音频和流式音频，立即开始播放
+            if (!isPlayingPrefixAudio && !isPlayingStreamAudio) {
+                playNextAudioChunk();
+            }
+        }
+
+        // 清空TTS音频队列
+        function clearAudioQueue() {
+            // 清空流式音频队列
+            audioQueue = [];
+            
+            // 停止当前播放的流式音频
+            if (currentAudioSource) {
+                currentAudioSource.stop();
+                currentAudioSource = null;
+            }
+            
+            // 停止前缀音频播放
+            if (currentPrefixAudio) {
+                currentPrefixAudio.pause();
+                currentPrefixAudio.currentTime = 0;
+                currentPrefixAudio = null;
+            }
+            
+            // 重置所有播放状态
+            isPlayingStreamAudio = false;
+            isPlayingPrefixAudio = false;
+            
+            console.log('所有音频已停止并清空队列');
+        }
+
+        // 打字机效果函数
+        async function typeText(element, text, speed = 50) {
+            element.textContent = '';
+            for (let i = 0; i < text.length; i++) {
+                element.textContent += text[i];
+                await new Promise(resolve => setTimeout(resolve, speed));
+            }
+        }
+
+        // 提交表单，开始新对话
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = {
+                user_info: {
+                    user_id: document.getElementById('userId').value,
+                    dialect: document.getElementById('dialect').value,
+                    gender: document.getElementById('gender').value,
+                    preferences: document.getElementById('preferences').value.split(',').map(p => p.trim()),
+                    username: document.getElementById('username').value
+                },
+                shop_info: {
+                    shop_id: document.getElementById('shopId').value,
+                    name: document.getElementById('shopName').value,
+                    region: document.getElementById('region').value,
+                    contact: document.getElementById('contact').value,
+                    remark: document.getElementById('remark').value,
+                    promotions: document.getElementById('promotions').value.split(',').map(p => p.trim())
+                }
+            };
+
+            try {
+                modalOverlay.style.display = 'none';
+                chatContainer.style.display = 'flex';
+                
+                await startNewChat(formData);
+            } catch (error) {
+                console.error('开始对话失败:', error);
+                alert('开始对话失败，请重试');
+                modalOverlay.style.display = 'flex';
+                chatContainer.style.display = 'none';
+            }
+        });
+
+        // 发送消息
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 新建对话
+        newChatBtn.addEventListener('click', () => {
+            sessionId = null;
+            isTyping = false;
+            sendBtn.disabled = false;
+            cancelBtn.disabled = true;
+            chatMessages.innerHTML = '';
+            clearAudioQueue(); // 清空音频队列
+            modalOverlay.style.display = 'flex';
+            chatContainer.style.display = 'none';
+        });
+
+        // 开始新对话
+        async function startNewChat(formData) {
+            const requestStartTime = performance.now();
+            
+            try {
+                sessionId = null;
+                isTyping = false;
+                sendBtn.disabled = false;
+                cancelBtn.disabled = true;
+                clearAudioQueue(); // 清空之前的音频队列
+                
+                const response = await fetch('http://localhost:8000/chat/new/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(formData)
+                });
+
+                if (!response.ok) {
+                    throw new Error('网络请求失败');
+                }
+
+                const aiMessage = addMessage('', 'ai');
+                const prefixData = await handlePrefix('welcome');
+                
+                // 只启动两个操作：
+                // 1. SSE流处理（包含前缀文本打字机效果）
+                // 2. 前缀音频播放
+                const ssePromise = processSSEStream(response, aiMessage, requestStartTime, prefixData);
+                const audioPromise = playPrefixAudio(prefixData.audioFile);
+                
+                // 等待SSE流完成
+                await ssePromise;
+                
+            } catch (error) {
+                console.error('开始新对话失败:', error);
+                throw error;
+            }
+        }
+
+        // 添加打断功能
+        cancelBtn.addEventListener('click', async () => {
+            if (!sessionId || !isTyping) return;
+
+            try {
+                const response = await fetch('http://localhost:8000/chat/cancel_audio', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('取消请求失败');
+                }
+
+                isTyping = false;
+                sendBtn.disabled = false;
+                cancelBtn.disabled = true;
+                clearAudioQueue(); // 清空音频队列
+
+                addMessage('已打断当前对话', 'ai');
+
+            } catch (error) {
+                console.error('打断失败:', error);
+                addMessage('打断失败，请重试', 'ai');
+            }
+        });
+
+        // 添加消息到聊天区域
+        function addMessage(content, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'avatar';
+            avatar.textContent = type === 'user' ? '我' : 'AI';
+            
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble';
+            bubble.textContent = content;
+            
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(bubble);
+            
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            return { bubble, messageDiv };
+        }
+
+        // SSE流处理函数
+        async function processSSEStream(response, aiMessage, requestStartTime, prefixData) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+            let firstResponseTime = null;
+            let firstStreamTime = null;
+            let lastStreamTime = null;
+            let firstAudioTime = null;
+            let accumulatedText = '';
+            let responseTimeDiv = null;
+            
+            // 流队列 - 用于缓存所有流数据
+            let streamQueue = {
+                textChunks: [],
+                audioChunks: []
+            };
+            let prefixCompleted = false;
+            let prefixTypingCompleted = false;
+
+            console.log('立即开始处理SSE流...');
+
+            // 流队列消费函数
+            const consumeStreamQueue = async () => {
+                if (!prefixCompleted || !prefixTypingCompleted) return;
+                
+                console.log('前缀完成，开始消费流队列');
+                
+                // 消费所有缓存的文本块
+                while (streamQueue.textChunks.length > 0) {
+                    const textChunk = streamQueue.textChunks.shift();
+                    aiMessage.bubble.textContent += textChunk;
+                }
+                
+                // 消费所有缓存的音频块
+                while (streamQueue.audioChunks.length > 0) {
+                    const audioChunk = streamQueue.audioChunks.shift();
+                    addAudioChunkToQueue(audioChunk);
+                }
+                
+                // 触发UI更新
+                void aiMessage.bubble.offsetHeight;
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            };
+
+            // 检查前缀完成状态并立即消费队列
+            const checkPrefixAndConsume = async () => {
+                if (!prefixCompleted && !isPlayingPrefixAudio) {
+                    prefixCompleted = true;
+                    console.log('前缀音频完成，等待打字机效果完成');
+                }
+            };
+
+            // 高频检查前缀完成状态（每10ms检查一次以确保最快响应）
+            const prefixChecker = setInterval(checkPrefixAndConsume, 10);
+
+            try {
+                // 等待前缀文本打字机效果完成
+                await typeText(aiMessage.bubble, prefixData.text);
+                prefixTypingCompleted = true;
+                console.log('前缀文本打字机效果完成，开始处理流数据');
+
+                // 立即开始处理流数据，不等待任何前缀操作
+                while (true) {
+                    const { done, value } = await reader.read();
+                    const currentTime = performance.now();
+                    
+                    if (done) {
+                        lastStreamTime = currentTime;
+                        console.log('SSE流结束');
+                        break;
+                    }
+
+                    if (firstResponseTime === null) {
+                        firstResponseTime = currentTime;
+                        firstStreamTime = currentTime;
+                        responseTimeDiv = document.createElement('div');
+                        responseTimeDiv.className = 'response-time';
+                        responseTimeDiv.textContent = `首文响应时间: ${((firstResponseTime - requestStartTime) / 1000).toFixed(2)}s`;
+                        aiMessage.messageDiv.appendChild(responseTimeDiv);
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    let lineEnd;
+                    while ((lineEnd = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.substring(0, lineEnd).trim();
+                        buffer = buffer.substring(lineEnd + 1);
+                        
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.slice(6).trim();
+                            if (jsonStr === '') continue;
+                            
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                
+                                if (data.session_id && !sessionId) {
+                                    sessionId = data.session_id;
+                                }
+                                
+                                if (data.type === 'audio_chunk') {
+                                    if (firstAudioTime === null) {
+                                        firstAudioTime = currentTime;
+                                        console.log('收到第一个音频块，立即缓存到队列');
+                                        responseTimeDiv.textContent += ` | 首音响应时间: ${((firstAudioTime - requestStartTime) / 1000).toFixed(2)}s`;
+                                    }
+                                    
+                                    const audioChunk = {
+                                        sentence_id: data.sentence_id,
+                                        chunk_id: data.chunk_id,
+                                        data: data.data,
+                                        text: data.text,
+                                        is_final: data.is_final
+                                    };
+                                    
+                                    // 立即缓存到流队列
+                                    streamQueue.audioChunks.push(audioChunk);
+                                    
+                                    // 如果前缀已完成，立即消费
+                                    if (prefixCompleted && prefixTypingCompleted) {
+                                        const cachedChunk = streamQueue.audioChunks.shift();
+                                        addAudioChunkToQueue(cachedChunk);
+                                    }
+                                    
+                                    continue;
+                                }
+                                
+                                if (data.type === 'text' && data.response !== undefined && data.status === 'success') {
+                                    // 立即缓存到流队列
+                                    streamQueue.textChunks.push(data.response);
+                                    accumulatedText += data.response;
+                                    
+                                    // 如果前缀已完成，立即消费
+                                    if (prefixCompleted && prefixTypingCompleted) {
+                                        const cachedText = streamQueue.textChunks.shift();
+                                        aiMessage.bubble.textContent += cachedText;
+                                        void aiMessage.bubble.offsetHeight;
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据失败:', e);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                clearInterval(prefixChecker);
+                reader.releaseLock();
+                
+                // 最终确保消费完所有队列内容
+                prefixCompleted = true;
+                prefixTypingCompleted = true;
+                await consumeStreamQueue();
+                
+                if (lastStreamTime !== null && responseTimeDiv) {
+                    responseTimeDiv.textContent += ` | 文本流传输: ${((lastStreamTime - firstStreamTime) / 1000).toFixed(2)}s`;
+                }
+
+                isTyping = false;
+                sendBtn.disabled = false;
+                cancelBtn.disabled = true;
+                
+                console.log('SSE流处理完成，队列消费完毕');
+            }
+        }
+    </script>
+</body>
+</html>
